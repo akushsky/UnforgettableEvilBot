@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"  # FastAPI
-      - "3000:3000"  # WhatsApp Bridge
+      # WhatsApp Bridge runs internally on port 3000, no external exposure needed
     environment:
       # Database - Coolify will provide these
       - DATABASE_URL=${DATABASE_URL}

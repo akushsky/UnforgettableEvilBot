@@ -141,7 +141,7 @@ The system is configured with reasonable limits:
 
 ### **Ports**
 - **8000**: FastAPI application
-- **3000**: WhatsApp Bridge (internal)
+- **3000**: WhatsApp Bridge (internal only)
 
 ## 📊 Monitoring
 
