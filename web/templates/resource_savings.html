@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}Resource Savings - Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h3 mb-0">
+                    <i class="fas fa-leaf text-success"></i>
+                    Resource Savings Metrics
+                </h1>
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary" onclick="refreshData()">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                    <button class="btn btn-outline-secondary" onclick="exportData()">
+                        <i class="fas fa-download"></i> Export
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">WhatsApp Connections Saved</h6>
+                            <h3 id="connections-saved">-</h3>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-wifi fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Memory Saved (MB)</h6>
+                            <h3 id="memory-saved">-</h3>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-memory fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">CPU Time Saved (hours)</h6>
+                            <h3 id="cpu-saved">-</h3>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-microchip fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Cost Saved (USD)</h6>
+                            <h3 id="cost-saved">-</h3>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-dollar-sign fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed Metrics -->
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-chart-line"></i>
+                        Resource Savings Overview
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Value</th>
+                                    <th>Period</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>WhatsApp Connections Saved</td>
+                                    <td id="detail-connections">-</td>
+                                    <td id="period-days">-</td>
+                                </tr>
+                                <tr>
+                                    <td>Messages Not Processed</td>
+                                    <td id="detail-messages">-</td>
+                                    <td id="period-days-2">-</td>
+                                </tr>
+                                <tr>
+                                    <td>OpenAI Requests Saved</td>
+                                    <td id="detail-openai">-</td>
+                                    <td id="period-days-3">-</td>
+                                </tr>
+                                <tr>
+                                    <td>Memory Saved (MB)</td>
+                                    <td id="detail-memory">-</td>
+                                    <td id="period-days-4">-</td>
+                                </tr>
+                                <tr>
+                                    <td>CPU Time Saved (seconds)</td>
+                                    <td id="detail-cpu">-</td>
+                                    <td id="period-days-5">-</td>
+                                </tr>
+                                <tr>
+                                    <td>OpenAI Cost Saved (USD)</td>
+                                    <td id="detail-cost">-</td>
+                                    <td id="period-days-6">-</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-cog"></i>
+                        Current System Status
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Current Memory Usage</label>
+                        <div class="progress">
+                            <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <small class="text-muted" id="memory-text">-</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Current CPU Usage</label>
+                        <div class="progress">
+                            <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <small class="text-muted" id="cpu-text">-</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Records Count</label>
+                        <div class="d-flex justify-content-between">
+                            <span id="records-count">-</span>
+                            <small class="text-muted">savings records</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Savings Table -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-users"></i>
+                        User Resource Savings
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="user-savings-table">
+                            <thead>
+                                <tr>
+                                    <th>User ID</th>
+                                    <th>Username</th>
+                                    <th>Connections Saved</th>
+                                    <th>Memory Saved (MB)</th>
+                                    <th>Cost Saved (USD)</th>
+                                    <th>Last Updated</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="user-savings-body">
+                                <tr>
+                                    <td colspan="7" class="text-center">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let refreshInterval;
+
+function updateMetrics(data) {
+    if (!data || !data.metrics || !data.metrics.resource_savings) {
+        console.error('Invalid data structure:', data);
+        return;
+    }
+
+    const savings = data.metrics.resource_savings;
+    const system = savings.current_system || {};
+
+    // Update summary cards
+    document.getElementById('connections-saved').textContent = savings.total_whatsapp_connections_saved || 0;
+    document.getElementById('memory-saved').textContent = (savings.total_memory_mb_saved || 0).toFixed(1);
+    document.getElementById('cpu-saved').textContent = ((savings.total_cpu_seconds_saved || 0) / 3600).toFixed(1);
+    document.getElementById('cost-saved').textContent = (savings.total_openai_cost_saved_usd || 0).toFixed(4);
+
+    // Update detailed metrics
+    document.getElementById('detail-connections').textContent = savings.total_whatsapp_connections_saved || 0;
+    document.getElementById('detail-messages').textContent = savings.total_messages_processed_saved || 0;
+    document.getElementById('detail-openai').textContent = savings.total_openai_requests_saved || 0;
+    document.getElementById('detail-memory').textContent = (savings.total_memory_mb_saved || 0).toFixed(2);
+    document.getElementById('detail-cpu').textContent = (savings.total_cpu_seconds_saved || 0).toFixed(2);
+    document.getElementById('detail-cost').textContent = (savings.total_openai_cost_saved_usd || 0).toFixed(4);
+
+    // Update period days
+    const periodDays = savings.period_days || 30;
+    document.querySelectorAll('[id^="period-days"]').forEach(el => {
+        el.textContent = `${periodDays} days`;
+    });
+
+    // Update system status
+    const memoryPercent = system.current_memory_usage_percent || 0;
+    const cpuPercent = system.current_cpu_usage_percent || 0;
+
+    document.getElementById('memory-progress').style.width = `${memoryPercent}%`;
+    document.getElementById('memory-text').textContent = `${system.current_memory_usage_mb || 0} MB (${memoryPercent}%)`;
+
+    document.getElementById('cpu-progress').style.width = `${cpuPercent}%`;
+    document.getElementById('cpu-text').textContent = `${cpuPercent}%`;
+
+    document.getElementById('records-count').textContent = savings.records_count || 0;
+
+    // Update progress bar colors
+    updateProgressBarColor('memory-progress', memoryPercent);
+    updateProgressBarColor('cpu-progress', cpuPercent);
+}
+
+function updateProgressBarColor(elementId, percent) {
+    const element = document.getElementById(elementId);
+    element.className = 'progress-bar';
+
+    if (percent > 80) {
+        element.classList.add('bg-danger');
+    } else if (percent > 60) {
+        element.classList.add('bg-warning');
+    } else {
+        element.classList.add('bg-success');
+    }
+}
+
+async function refreshData() {
+    try {
+        const response = await fetch('/metrics');
+        const data = await response.json();
+        updateMetrics(data);
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+        showAlert('Error refreshing data', 'danger');
+    }
+}
+
+function exportData() {
+    // Implementation for data export
+    showAlert('Export functionality coming soon', 'info');
+}
+
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    const container = document.querySelector('.container-fluid');
+    container.insertBefore(alertDiv, container.firstChild);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+// Auto-refresh every 30 seconds
+function startAutoRefresh() {
+    refreshInterval = setInterval(refreshData, 30000);
+}
+
+function stopAutoRefresh() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+}
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    refreshData();
+    startAutoRefresh();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    stopAutoRefresh();
+});
+</script>
+{% endblock %}

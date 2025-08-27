@@ -1,0 +1,196 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatsapp-digest-bot"
+version = "1.0.0"
+description = "WhatsApp чат мониторинг система с AI-анализом и созданием дайджестов"
+authors = [
+    {name = "WhatsApp Digest Team", email = "team@whatsappdigest.com"},
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["whatsapp", "ai", "digest", "monitoring", "chatbot"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.35.0",
+    "sqlalchemy==2.0.43",
+    "alembic==1.16.4",
+    "psycopg2-binary==2.9.10",
+    "python-multipart==0.0.20",
+    "python-jose[cryptography]==3.5.0",
+    "passlib[bcrypt]==1.7.4",
+    "python-dotenv==1.1.1",
+    "openai==1.101.0",
+    "httpx==0.28.1",
+    "redis==6.4.0",
+    "prometheus-client==0.22.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.1",
+    "pytest-asyncio==1.1.0",
+    "pytest-cov==6.2.1",
+    "pytest-mock==3.14.1",
+    "black==25.1.0",
+    "flake8==7.3.0",
+    "mypy==1.17.1",
+    "isort==6.0.1",
+    "pre-commit==4.3.0",
+]
+docs = [
+    "sphinx==7.2.6",
+    "sphinx-rtd-theme==2.0.0",
+    "sphinx-autodoc-typehints==1.25.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/whatsapp-digest/bot"
+Documentation = "https://whatsapp-digest.readthedocs.io/"
+Repository = "https://github.com/whatsapp-digest/bot"
+"Bug Tracker" = "https://github.com/whatsapp-digest/bot/issues"
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ['py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | migrations
+  | alembic/versions
+)/
+'''
+
+# isort configuration
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["app", "config", "tests"]
+known_third_party = ["fastapi", "sqlalchemy", "pydantic", "openai"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+default_section = "THIRDPARTY"
+skip_glob = ["*/migrations/*", "*/alembic/versions/*"]
+
+# MyPy configuration - Gradual strict typing introduction
+[tool.mypy]
+python_version = "3.11"
+show_error_codes = true
+warn_unused_configs = true
+# Use --no-site-packages to avoid SQLAlchemy syntax issues
+
+# Stricter configuration - catch more type issues
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true  # Enable to catch real issues
+warn_return_any = false  # Don't warn about returning Any (SQLAlchemy limitation)
+no_implicit_optional = true  # Require explicit Optional
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+warn_redundant_casts = true  # Warn about redundant casts
+
+# Exclude only truly problematic directories
+exclude = [
+    "alembic/",
+    "tests/",
+    "whatsapp_bridge/",
+]
+
+# Ignore only external libraries
+[[tool.mypy.overrides]]
+module = [
+    "openai.*",
+    "redis.*",
+    "prometheus_client.*",
+    "passlib.*",
+    "jose.*",
+    "sqlalchemy.*",
+    "alembic.*",
+    "psycopg2.*",
+    "celery.*",
+    "telegram.*",
+    "whatsapp_bridge.*",
+    "tests.*",
+    "fastapi.*",
+    "pydantic.*",
+    "httpx.*",
+    "starlette.*",
+    "uvicorn.*",
+    "aiohttp.*",
+    "psutil.*",
+    "dotenv.*",
+]
+ignore_missing_imports = true
+
+# Note: Removed ignore_errors overrides to enable stricter type checking
+
+# Pytest configuration
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::sqlalchemy.exc.MovedIn20Warning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["app", "config"]
+omit = [
+    "*/tests/*",
+    "*/migrations/*",
+    "*/alembic/*",
+    "*/__init__.py",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

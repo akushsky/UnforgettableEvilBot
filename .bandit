@@ -1,0 +1,7 @@
+[bandit]
+exclude_dirs = ["tests", ".venv", "htmlcov", "whatsapp_bridge/node_modules", "whatsapp_sessions"]
+skips = ["B101", "B404", "B105"]
+
+# B101: assert_used - OK in test files
+# B404: import_subprocess - OK for process management
+# B105: hardcoded_password_string - OK in test files

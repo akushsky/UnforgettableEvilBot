@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Main application optimized for Coolify
+  whatsapp-digest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-digest-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"  # FastAPI
+      - "3000:3000"  # WhatsApp Bridge
+    environment:
+      # Database - Coolify will provide these
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+
+      # Required API keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+
+      # Application settings
+      - PYTHON_BACKEND_URL=http://localhost:8000
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+
+      # Performance settings
+      - MAX_WORKERS=10
+      - MAX_PROCESS_WORKERS=4
+      - DB_POOL_SIZE=20
+      - DB_MAX_OVERFLOW=30
+
+      # Cleanup settings
+      - CLEANUP_OLD_MESSAGES_DAYS=30
+      - CLEANUP_OLD_SYSTEM_LOGS_DAYS=7
+      - CLEANUP_COMPLETED_TASKS_HOURS=24
+
+      # Repository settings
+      - USE_OPTIMIZED_REPOSITORIES=true
+
+      # Cache settings
+      - REDIS_ENABLED=true
+      - CACHE_TTL_DEFAULT=3600
+
+      # OpenAI settings
+      - OPENAI_MODEL=gpt-4o-mini
+      - OPENAI_MAX_TOKENS=1000
+      - OPENAI_TEMPERATURE=0.3
+
+      # WhatsApp settings
+      - WHATSAPP_SESSION_PATH=/app/whatsapp_sessions
+
+      # Async processor settings
+      - SKIP_ASYNC_PROCESSOR=false
+
+    volumes:
+      - whatsapp-sessions:/app/whatsapp_sessions
+      - app-logs:/app/logs
+      - app-data:/app/data
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Resource limits for Coolify
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+volumes:
+  whatsapp-sessions:
+    driver: local
+  app-logs:
+    driver: local
+  app-data:
+    driver: local

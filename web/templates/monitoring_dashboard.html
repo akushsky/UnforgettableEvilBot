@@ -1,0 +1,1176 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд мониторинга - WhatsApp Digest System{% endblock %}
+
+{% block extra_css %}
+    <link href="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.css" rel="stylesheet">
+    <style>
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .metric-card.success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        .metric-card.warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .metric-card.danger {
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+        }
+        .metric-card.info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .metric-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .alert-item {
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .alert-item.warning {
+            border-left-color: #ffc107;
+        }
+        .alert-item.info {
+            border-left-color: #17a2b8;
+        }
+        .trace-item {
+            background: #f8f9fa;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .trace-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .trace-item.success {
+            border-left-color: #28a745;
+        }
+
+        .trace-item.warning {
+            border-left-color: #ffc107;
+        }
+
+        .trace-item.error {
+            border-left-color: #dc3545;
+        }
+
+        .trace-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .trace-id {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #495057;
+        }
+
+        .trace-duration {
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+
+        .trace-duration.fast { color: #28a745; }
+        .trace-duration.medium { color: #ffc107; }
+        .trace-duration.slow { color: #dc3545; }
+
+        .trace-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 0.85rem;
+        }
+
+        .trace-spans {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        .span-badge {
+            background: #e9ecef;
+            color: #495057;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .span-badge.database { background: #d1ecf1; color: #0c5460; }
+        .span-badge.api { background: #d4edda; color: #155724; }
+        .span-badge.cache { background: #fff3cd; color: #856404; }
+        .span-badge.error { background: #f8d7da; color: #721c24; }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-healthy { background-color: #28a745; }
+        .status-warning { background-color: #ffc107; }
+        .status-error { background-color: #dc3545; }
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 1000;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <h1 class="mt-4 mb-4">
+                    <i class="fas fa-chart-line"></i>
+                    Дашборд мониторинга
+                </h1>
+            </div>
+        </div>
+
+        <!-- Основные метрики -->
+        <div class="row">
+            <div class="col-md-2">
+                <div class="metric-card success">
+                    <div class="metric-value" id="active-users">-</div>
+                    <div class="metric-label">Активные пользователи</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card" id="cpu-card">
+                    <div class="metric-value" id="cpu-usage">-</div>
+                    <div class="metric-label">CPU (%)</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card" id="memory-card">
+                    <div class="metric-value" id="memory-usage">-</div>
+                    <div class="metric-label">Память (%)</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card" id="active-alerts-card">
+                    <div class="metric-value" id="active-alerts">-</div>
+                    <div class="metric-label">Активные алерты</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card info">
+                    <div class="metric-value" id="total-traces">-</div>
+                    <div class="metric-label">Всего трейсов</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card warning">
+                    <div class="metric-value" id="active-traces">-</div>
+                    <div class="metric-label">Активные трейсы</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card info">
+                    <div class="metric-value" id="openai-requests">-</div>
+                    <div class="metric-label">OpenAI запросы</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="metric-card success">
+                    <div class="metric-value" id="openai-cost">-</div>
+                    <div class="metric-label">OpenAI расходы</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Статус сервисов -->
+        <div class="row">
+            <div class="col-12">
+                <div class="chart-container">
+                    <h4><i class="fas fa-server"></i> Статус сервисов</h4>
+                    <div class="row" id="services-status">
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-healthy"></span>
+                                <span>База данных</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-healthy"></span>
+                                <span>Redis кэш</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-healthy"></span>
+                                <span>OpenAI API</span>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex align-items-center">
+                                <span class="status-indicator status-healthy"></span>
+                                <span>Telegram Bot</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Активные алерты -->
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4><i class="fas fa-exclamation-triangle"></i> Активные алерты</h4>
+                    <div id="alerts-list">
+                        <p class="text-muted">Загрузка алертов...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Последние трейсы -->
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4><i class="fas fa-route"></i> Последние трейсы</h4>
+                    <div id="traces-list">
+                        <p class="text-muted">Загрузка трейсов...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Графики производительности -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4><i class="fas fa-database"></i> Подключения к БД</h4>
+                    <canvas id="dbChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4><i class="fas fa-memory"></i> Использование кэша</h4>
+                    <canvas id="cacheChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Системная информация -->
+        <div class="row">
+            <div class="col-12">
+                <div class="chart-container">
+                    <h4><i class="fas fa-info-circle"></i> Системная информация</h4>
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div class="h3" id="total-queries">-</div>
+                                <small class="text-muted">Запросов к БД</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div class="h3 text-warning" id="slow-queries">-</div>
+                                <small class="text-muted">Медленных запросов</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div class="h3 text-info" id="cache-size">-</div>
+                                <small class="text-muted">Размер кэша</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div class="h3 text-secondary" id="uptime">-</div>
+                                <small class="text-muted">Время работы</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Детальный мониторинг OpenAI -->
+        <div class="row">
+            <div class="col-12">
+                <div class="chart-container">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h4><i class="fas fa-robot"></i> Детальный мониторинг OpenAI</h4>
+                        <button class="btn btn-outline-primary btn-sm" onclick="exportOpenAIData()">
+                            <i class="fas fa-download"></i> Экспорт данных
+                        </button>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-chart-line"></i> Статистика запросов</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="text-center mb-3">
+                                        <div class="h4 text-primary" id="openai-success-rate">-</div>
+                                        <small class="text-muted">Успешность (%)</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="text-center mb-3">
+                                        <div class="h4 text-info" id="openai-avg-tokens">-</div>
+                                        <small class="text-muted">Среднее токенов</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="text-center mb-3">
+                                        <div class="h4 text-success" id="openai-requests-24h">-</div>
+                                        <small class="text-muted">Запросов за 24ч</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="text-center mb-3">
+                                        <div class="h4 text-warning" id="openai-cost-24h">-</div>
+                                        <small class="text-muted">Расходы за 24ч</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-clock"></i> Последние запросы</h6>
+                            <div id="openai-recent-requests" style="max-height: 200px; overflow-y: auto;">
+                                <p class="text-muted">Загрузка последних запросов...</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <h6><i class="fas fa-chart-pie"></i> Использование моделей</h6>
+                            <div class="row" id="openai-models-usage">
+                                <div class="col-md-12">
+                                    <p class="text-muted">Загрузка статистики моделей...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Кнопка обновления -->
+    <button class="btn btn-primary refresh-btn" onclick="refreshDashboard()">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+
+    <!-- Модальное окно деталей трейса -->
+    <div class="modal fade" id="traceDetailsModal" tabindex="-1" aria-labelledby="traceDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="traceDetailsModalLabel">
+                        <i class="fas fa-route text-primary me-2"></i>
+                        Детали трейса
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="traceDetailsContent">
+                    <div class="text-center">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        <p class="mt-2">Загрузка деталей трейса...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                    <button type="button" class="btn btn-primary" id="exportTraceBtn" style="display: none;">
+                        <i class="fas fa-download me-2"></i>Экспорт
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно рекомендаций по алертам -->
+    <div class="modal fade" id="alertRecommendationsModal" tabindex="-1" aria-labelledby="alertRecommendationsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="alertRecommendationsModalLabel">
+                        <i class="fas fa-lightbulb text-warning me-2"></i>
+                        Рекомендации по устранению проблем
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="alertRecommendationsContent">
+                    <!-- Content will be loaded dynamically -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Глобальные переменные для графиков
+        let dbChart, cacheChart;
+
+        // Инициализация дашборда
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCharts();
+            refreshDashboard();
+
+            // Автообновление каждые 30 секунд
+            setInterval(refreshDashboard, 30000);
+        });
+
+        function initializeCharts() {
+            // График операций с БД
+            const dbCtx = document.getElementById('dbChart').getContext('2d');
+            dbChart = new Chart(dbCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Запросы в секунду',
+                        data: [],
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+
+            // График использования кэша
+            const cacheCtx = document.getElementById('cacheChart').getContext('2d');
+            cacheChart = new Chart(cacheCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Hit', 'Miss'],
+                    datasets: [{
+                        data: [70, 30],
+                        backgroundColor: [
+                            'rgb(75, 192, 192)',
+                            'rgb(255, 99, 132)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true
+                }
+            });
+        }
+
+        async function refreshDashboard() {
+            try {
+                // Получаем метрики
+                const metricsResponse = await fetch('/metrics');
+                const metrics = await metricsResponse.json();
+
+                // Получаем алерты
+                const alertsResponse = await fetch('/monitoring/alerts');
+                const alerts = await alertsResponse.json();
+                console.log('Alerts API response:', alerts); // Debug log
+
+                // Получаем трейсы
+                const tracesResponse = await fetch('/monitoring/traces?limit=5');
+                const traces = await tracesResponse.json();
+                console.log('Traces API response:', traces); // Debug log
+
+                // Обновляем метрики
+                updateMetrics(metrics);
+
+                // Обновляем алерты
+                updateAlerts(alerts);
+
+                // Обновляем трейсы
+                updateTraces(traces);
+
+                // Обновляем графики
+                updateCharts(metrics);
+
+                // Обновляем системную информацию
+                updateSystemInfo(metrics);
+
+            } catch (error) {
+                console.error('Ошибка при обновлении дашборда:', error);
+            }
+        }
+
+        function updateMetrics(metrics) {
+            // Основные метрики
+            const users = metrics.metrics?.users?.active || 0;
+            document.getElementById('active-users').textContent = users;
+
+            // CPU usage
+            const cpuUsage = metrics.metrics?.performance?.cpu_usage || 0;
+            document.getElementById('cpu-usage').textContent = cpuUsage.toFixed(1);
+
+            const cpuCard = document.getElementById('cpu-card');
+            cpuCard.className = 'metric-card';
+            if (cpuUsage > 80) {
+                cpuCard.classList.add('danger');
+            } else if (cpuUsage > 60) {
+                cpuCard.classList.add('warning');
+            } else {
+                cpuCard.classList.add('success');
+            }
+
+            // Memory usage
+            const memoryUsage = metrics.metrics?.performance?.memory_usage || 0;
+            document.getElementById('memory-usage').textContent = memoryUsage.toFixed(1);
+
+            const memoryCard = document.getElementById('memory-card');
+            memoryCard.className = 'metric-card';
+            if (memoryUsage > 85) {
+                memoryCard.classList.add('danger');
+            } else if (memoryUsage > 70) {
+                memoryCard.classList.add('warning');
+            } else {
+                memoryCard.classList.add('success');
+            }
+
+            // Активные алерты (будет обновлено в updateAlerts)
+            const activeAlerts = metrics.metrics?.system?.active_alerts || 0;
+            document.getElementById('active-alerts').textContent = activeAlerts;
+
+            const alertsCard = document.getElementById('active-alerts-card');
+            alertsCard.className = 'metric-card';
+            if (activeAlerts > 0) {
+                alertsCard.classList.add('warning');
+            } else {
+                alertsCard.classList.add('success');
+            }
+
+            // Трейсы (будет обновлено в updateTraces)
+            const totalTraces = metrics.metrics?.system?.total_traces || 0;
+            const activeTraces = metrics.metrics?.system?.active_traces || 0;
+
+            document.getElementById('total-traces').textContent = totalTraces;
+            document.getElementById('active-traces').textContent = activeTraces;
+
+            // OpenAI metrics
+            const openaiRequests = metrics.metrics?.openai?.total_requests || 0;
+            const openaiCost = metrics.metrics?.openai?.total_cost_usd || 0;
+
+            document.getElementById('openai-requests').textContent = openaiRequests;
+            document.getElementById('openai-cost').textContent = `$${openaiCost.toFixed(6)}`;
+
+            // Обновляем детальную информацию OpenAI
+            updateOpenAIDetails(metrics.metrics?.openai);
+        }
+
+        function updateOpenAIDetails(openaiData) {
+            if (!openaiData) {
+                // Если данных нет, показываем заглушки
+                document.getElementById('openai-success-rate').textContent = '-';
+                document.getElementById('openai-avg-tokens').textContent = '-';
+                document.getElementById('openai-requests-24h').textContent = '-';
+                document.getElementById('openai-cost-24h').textContent = '-';
+                document.getElementById('openai-recent-requests').innerHTML = '<p class="text-muted">Нет данных о запросах</p>';
+                document.getElementById('openai-models-usage').innerHTML = '<p class="text-muted">Нет данных о моделях</p>';
+                return;
+            }
+
+            // Статистика запросов
+            const successRate = openaiData.success_rate || 0;
+            const avgTokens = openaiData.avg_tokens_per_request || 0;
+            const requests24h = Array.isArray(openaiData.recent_24h) ? openaiData.recent_24h.length : 0;
+            const cost24h = openaiData.cost_24h || 0;
+
+            document.getElementById('openai-success-rate').textContent = `${successRate.toFixed(1)}%`;
+            document.getElementById('openai-avg-tokens').textContent = Math.round(avgTokens);
+            document.getElementById('openai-requests-24h').textContent = requests24h;
+            document.getElementById('openai-cost-24h').textContent = `$${cost24h.toFixed(6)}`;
+
+            // Последние запросы
+            const recentRequests = openaiData.recent_requests || [];
+            if (recentRequests.length === 0) {
+                document.getElementById('openai-recent-requests').innerHTML = '<p class="text-muted">Нет последних запросов</p>';
+            } else {
+                const requestsHtml = recentRequests.slice(0, 5).map(request => `
+                    <div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom">
+                        <div>
+                            <small class="text-muted">${request.model || 'Unknown'}</small><br>
+                            <small class="text-success">${request.success ? '✅' : '❌'} ${request.tokens || 0} токенов</small>
+                        </div>
+                        <div class="text-end">
+                            <small class="text-warning">$${request.cost || 0}</small><br>
+                            <small class="text-muted">${new Date(request.timestamp).toLocaleTimeString()}</small>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('openai-recent-requests').innerHTML = requestsHtml;
+            }
+
+            // Использование моделей
+            const modelsUsage = openaiData.models_usage || {};
+            if (Object.keys(modelsUsage).length === 0) {
+                document.getElementById('openai-models-usage').innerHTML = '<p class="text-muted">Нет данных о моделях</p>';
+            } else {
+                const modelsHtml = Object.entries(modelsUsage).map(([model, stats]) => `
+                    <div class="col-md-4 mb-3">
+                        <div class="card border-info">
+                            <div class="card-body p-2">
+                                <h6 class="card-title mb-1">${model}</h6>
+                                <div class="row text-center">
+                                    <div class="col-6">
+                                        <small class="text-muted">Запросы</small><br>
+                                        <strong class="text-primary">${stats.requests || 0}</strong>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Токены</small><br>
+                                        <strong class="text-info">${stats.tokens || 0}</strong>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-1">
+                                    <small class="text-warning">$${stats.cost || 0}</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('openai-models-usage').innerHTML = modelsHtml;
+            }
+        }
+
+        function exportOpenAIData() {
+            fetch('/metrics')
+                .then(response => response.json())
+                .then(data => {
+                    const openaiData = data.metrics.openai;
+                    const exportData = {
+                        export_timestamp: new Date().toISOString(),
+                        summary: {
+                            total_requests: openaiData.total_requests,
+                            total_cost_usd: openaiData.total_cost_usd,
+                            success_rate: openaiData.success_rate,
+                            avg_tokens_per_request: openaiData.avg_tokens_per_request,
+                            cost_24h: openaiData.cost_24h
+                        },
+                        recent_requests: openaiData.recent_requests,
+                        models_usage: openaiData.models_usage
+                    };
+
+                    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `openai_metrics_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    showAlert('success', 'Данные OpenAI экспортированы успешно');
+                })
+                .catch(error => {
+                    console.error('Ошибка при экспорте данных OpenAI:', error);
+                    showAlert('danger', 'Ошибка при экспорте данных');
+                });
+        }
+
+        function updateAlerts(alerts) {
+            const alertsList = document.getElementById('alerts-list');
+            const activeAlertsCount = alerts?.active_alerts || 0;
+
+            // Обновляем счетчик активных алертов
+            document.getElementById('active-alerts').textContent = activeAlertsCount;
+
+            const alertsCard = document.getElementById('active-alerts-card');
+            alertsCard.className = 'metric-card';
+            if (activeAlertsCount > 0) {
+                alertsCard.classList.add('warning');
+            } else {
+                alertsCard.classList.add('success');
+            }
+
+            if (!alerts.recent_alerts || alerts.recent_alerts.length === 0) {
+                alertsList.innerHTML = '<p class="text-success">Нет активных алертов</p>';
+                return;
+            }
+
+            alertsList.innerHTML = alerts.recent_alerts.map(alert => `
+                <div class="alert-item ${alert.severity || 'warning'}">
+                    <div class="d-flex justify-content-between">
+                        <strong>${alert.title}</strong>
+                        <small>${new Date(alert.created_at).toLocaleString()}</small>
+                    </div>
+                    <div class="text-muted">${alert.source}</div>
+                    <div class="mt-2">
+                        <button class="btn btn-sm btn-outline-primary me-2" onclick="acknowledgeAlert('${alert.id}')">
+                            <i class="fas fa-check"></i> Подтвердить
+                        </button>
+                        <button class="btn btn-sm btn-outline-success me-2" onclick="resolveAlert('${alert.id}')">
+                            <i class="fas fa-check-double"></i> Разрешить
+                        </button>
+                        <button class="btn btn-sm btn-outline-info" onclick="showAlertRecommendations('${alert.title}', '${alert.severity}')">
+                            <i class="fas fa-lightbulb"></i> Рекомендации
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateTraces(traces) {
+            console.log('Traces data:', traces); // Debug log
+            const tracesList = document.getElementById('traces-list');
+
+            // Обновляем метрики трейсов
+            document.getElementById('total-traces').textContent = traces.total_traces || 0;
+            document.getElementById('active-traces').textContent = traces.active_traces || 0;
+
+            if (!traces.traces || traces.traces.length === 0) {
+                tracesList.innerHTML = `
+                    <div class="text-center py-4">
+                        <i class="fas fa-route fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">Нет трейсов для отображения</p>
+                        <small class="text-muted">Трейсы появятся при выполнении операций</small>
+                    </div>
+                `;
+                return;
+            }
+
+            tracesList.innerHTML = traces.traces.slice(0, 5).map(trace => {
+                // Определяем статус трейса
+                const hasErrors = trace.spans && trace.spans.some(span => span.status === 'error');
+                const duration = trace.duration || 0;
+                const durationMs = duration * 1000;
+
+                let statusClass = 'success';
+                let durationClass = 'fast';
+
+                if (hasErrors) {
+                    statusClass = 'error';
+                } else if (durationMs > 1000) {
+                    statusClass = 'warning';
+                }
+
+                if (durationMs > 2000) {
+                    durationClass = 'slow';
+                } else if (durationMs > 500) {
+                    durationClass = 'medium';
+                }
+
+                // Форматируем время
+                const startTime = new Date(trace.start_time * 1000);
+                const timeAgo = getTimeAgo(startTime);
+
+                // Анализируем спаны
+                const spans = trace.spans || [];
+                const spanTypes = analyzeSpans(spans);
+
+                return `
+                    <div class="trace-item ${statusClass}" onclick="showTraceDetails('${trace.trace_id}')">
+                        <div class="trace-header">
+                            <div class="trace-id">${trace.trace_id.substring(0, 12)}...</div>
+                            <div class="trace-duration ${durationClass}">${durationMs.toFixed(1)}ms</div>
+                        </div>
+
+                        <div class="trace-details">
+                            <span><i class="fas fa-clock"></i> ${timeAgo}</span>
+                            <span><i class="fas fa-layer-group"></i> ${trace.span_count || 0} операций</span>
+                        </div>
+
+                        ${spans.length > 0 ? `
+                            <div class="trace-spans">
+                                ${spanTypes.map(type => `
+                                    <span class="span-badge ${type.class}">${type.name}</span>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+
+                        ${hasErrors ? `
+                            <div class="mt-2">
+                                <small class="text-danger">
+                                    <i class="fas fa-exclamation-triangle"></i> Содержит ошибки
+                                </small>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function analyzeSpans(spans) {
+            const types = [];
+            const typeCount = {};
+
+            spans.forEach(span => {
+                const operation = span.operation_name || '';
+                let type = 'other';
+
+                if (operation.includes('database') || operation.includes('query') || operation.includes('db')) {
+                    type = 'database';
+                } else if (operation.includes('api') || operation.includes('request') || operation.includes('http')) {
+                    type = 'api';
+                } else if (operation.includes('cache') || operation.includes('redis')) {
+                    type = 'cache';
+                } else if (span.status === 'error') {
+                    type = 'error';
+                }
+
+                typeCount[type] = (typeCount[type] || 0) + 1;
+            });
+
+            // Создаем уникальные типы
+            Object.keys(typeCount).forEach(type => {
+                const count = typeCount[type];
+                let name = '';
+
+                switch(type) {
+                    case 'database': name = `DB (${count})`; break;
+                    case 'api': name = `API (${count})`; break;
+                    case 'cache': name = `Cache (${count})`; break;
+                    case 'error': name = `Error (${count})`; break;
+                    default: name = `Other (${count})`; break;
+                }
+
+                types.push({ name, class: type });
+            });
+
+            return types;
+        }
+
+        function getTimeAgo(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'Только что';
+            if (diffMins < 60) return `${diffMins} мин назад`;
+            if (diffHours < 24) return `${diffHours} ч назад`;
+            return `${diffDays} дн назад`;
+        }
+
+        function showTraceDetails(traceId) {
+            // Показываем модальное окно
+            const modal = new bootstrap.Modal(document.getElementById('traceDetailsModal'));
+            modal.show();
+
+            // Загружаем детали трейса
+            loadTraceDetails(traceId);
+        }
+
+        async function loadTraceDetails(traceId) {
+            const content = document.getElementById('traceDetailsContent');
+            const exportBtn = document.getElementById('exportTraceBtn');
+
+            try {
+                const response = await fetch(`/monitoring/traces/${traceId}`);
+                const trace = await response.json();
+
+                if (!trace) {
+                    content.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Трейс не найден
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Показываем кнопку экспорта
+                exportBtn.style.display = 'block';
+                exportBtn.onclick = () => exportTrace(traceId);
+
+                // Форматируем время
+                const startTime = new Date(trace.start_time * 1000);
+                const endTime = trace.end_time ? new Date(trace.end_time * 1000) : null;
+                const duration = trace.duration || 0;
+
+                // Анализируем спаны
+                const spans = trace.spans || [];
+                const errorSpans = spans.filter(span => span.status === 'error');
+                const successSpans = spans.filter(span => span.status === 'completed');
+
+                content.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-info-circle me-2"></i>Основная информация</h6>
+                            <table class="table table-sm">
+                                <tr><td>ID трейса:</td><td><code>${trace.trace_id}</code></td></tr>
+                                <tr><td>Время начала:</td><td>${startTime.toLocaleString()}</td></tr>
+                                <tr><td>Время завершения:</td><td>${endTime ? endTime.toLocaleString() : 'Не завершен'}</td></tr>
+                                <tr><td>Длительность:</td><td><strong>${(duration * 1000).toFixed(1)}ms</strong></td></tr>
+                                <tr><td>Количество операций:</td><td>${trace.span_count || 0}</td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-chart-pie me-2"></i>Статистика</h6>
+                            <div class="row text-center">
+                                <div class="col-4">
+                                    <div class="h4 text-success">${successSpans.length}</div>
+                                    <small class="text-muted">Успешных</small>
+                                </div>
+                                <div class="col-4">
+                                    <div class="h4 text-danger">${errorSpans.length}</div>
+                                    <small class="text-muted">Ошибок</small>
+                                </div>
+                                <div class="col-4">
+                                    <div class="h4 text-info">${spans.length}</div>
+                                    <small class="text-muted">Всего</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${spans.length > 0 ? `
+                        <hr>
+                        <h6><i class="fas fa-layer-group me-2"></i>Операции (${spans.length})</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Операция</th>
+                                        <th>Длительность</th>
+                                        <th>Статус</th>
+                                        <th>Время начала</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${spans.map(span => {
+                                        const spanStart = new Date(span.start_time * 1000);
+                                        const spanDuration = span.duration || 0;
+                                        const statusClass = span.status === 'error' ? 'text-danger' :
+                                                          span.status === 'completed' ? 'text-success' : 'text-warning';
+
+                                        return `
+                                            <tr>
+                                                <td><code>${span.operation_name}</code></td>
+                                                <td>${(spanDuration * 1000).toFixed(1)}ms</td>
+                                                <td><span class="${statusClass}">${span.status}</span></td>
+                                                <td>${spanStart.toLocaleTimeString()}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : '<p class="text-muted">Нет операций для отображения</p>'}
+                `;
+
+            } catch (error) {
+                console.error('Error loading trace details:', error);
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Ошибка загрузки деталей трейса: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function exportTrace(traceId) {
+            // Скачиваем трейс в JSON формате
+            const link = document.createElement('a');
+            link.href = `/monitoring/traces/${traceId}/export`;
+            link.download = `trace_${traceId}.json`;
+            link.click();
+        }
+
+        // Functions for alert management
+        async function acknowledgeAlert(alertId) {
+            try {
+                const response = await fetch(`/monitoring/alerts/${alertId}/acknowledge?user=admin`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    // Refresh the dashboard to show updated alerts
+                    refreshDashboard();
+                    console.log('Alert acknowledged successfully');
+                } else {
+                    console.error('Failed to acknowledge alert');
+                }
+            } catch (error) {
+                console.error('Error acknowledging alert:', error);
+            }
+        }
+
+        async function resolveAlert(alertId) {
+            try {
+                const response = await fetch(`/monitoring/alerts/${alertId}/resolve`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    // Refresh the dashboard to show updated alerts
+                    refreshDashboard();
+                    console.log('Alert resolved successfully');
+                } else {
+                    console.error('Failed to resolve alert');
+                }
+            } catch (error) {
+                console.error('Error resolving alert:', error);
+            }
+        }
+
+        function showAlertRecommendations(alertTitle, alertSeverity) {
+            const modal = new bootstrap.Modal(document.getElementById('alertRecommendationsModal'));
+            const content = document.getElementById('alertRecommendationsContent');
+
+            let recommendations = '';
+
+            if (alertTitle.includes('Cache Hit Ratio')) {
+                recommendations = `
+                    <h6><i class="fas fa-memory text-warning me-2"></i>Проблема с кэшем</h6>
+                    <p>Низкий hit ratio кэша означает, что кэш используется неэффективно.</p>
+
+                    <h6 class="mt-4">Возможные причины:</h6>
+                    <ul>
+                        <li>Кэш слишком маленький для объема данных</li>
+                        <li>Неправильная стратегия кэширования</li>
+                        <li>Частые изменения данных</li>
+                        <li>Неправильные ключи кэша</li>
+                    </ul>
+
+                    <h6 class="mt-4">Рекомендации по устранению:</h6>
+                    <ol>
+                        <li><strong>Увеличить размер кэша</strong> - выделить больше памяти для кэша</li>
+                        <li><strong>Оптимизировать ключи кэша</strong> - использовать более эффективные ключи</li>
+                        <li><strong>Настроить TTL</strong> - установить правильное время жизни кэша</li>
+                        <li><strong>Анализировать паттерны доступа</strong> - понять, какие данные кэшировать</li>
+                        <li><strong>Использовать многоуровневый кэш</strong> - L1 и L2 кэши</li>
+                    </ol>
+
+                    <div class="alert alert-info mt-3">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Быстрое решение:</strong> Увеличьте размер кэша в настройках системы.
+                    </div>
+                `;
+            } else if (alertTitle.includes('CPU') || alertTitle.includes('Memory')) {
+                recommendations = `
+                    <h6><i class="fas fa-server text-danger me-2"></i>Проблема с ресурсами</h6>
+                    <p>Высокое использование системных ресурсов может замедлить работу приложения.</p>
+
+                    <h6 class="mt-4">Рекомендации:</h6>
+                    <ul>
+                        <li>Проверить процессы, потребляющие ресурсы</li>
+                        <li>Оптимизировать запросы к базе данных</li>
+                        <li>Увеличить ресурсы сервера</li>
+                        <li>Настроить мониторинг ресурсов</li>
+                    </ul>
+                `;
+            } else if (alertTitle.includes('Database')) {
+                recommendations = `
+                    <h6><i class="fas fa-database text-danger me-2"></i>Проблема с базой данных</h6>
+                    <p>Медленные запросы или ошибки БД влияют на производительность.</p>
+
+                    <h6 class="mt-4">Рекомендации:</h6>
+                    <ul>
+                        <li>Оптимизировать медленные запросы</li>
+                        <li>Добавить индексы в БД</li>
+                        <li>Проверить настройки подключений</li>
+                        <li>Мониторить производительность БД</li>
+                    </ul>
+                `;
+            } else {
+                recommendations = `
+                    <h6><i class="fas fa-exclamation-triangle text-warning me-2"></i>Общие рекомендации</h6>
+                    <p>Для устранения проблемы рекомендуется:</p>
+                    <ul>
+                        <li>Проанализировать логи системы</li>
+                        <li>Проверить настройки сервиса</li>
+                        <li>Обратиться к документации</li>
+                        <li>Связаться с администратором</li>
+                    </ul>
+                `;
+            }
+
+            content.innerHTML = recommendations;
+            modal.show();
+        }
+
+        function updateCharts(metrics) {
+            // Обновляем график кэша
+            const cacheStats = metrics.metrics?.performance?.cache;
+            if (cacheStats) {
+                const hits = Math.round((cacheStats.memory_hit_ratio || 0) * 100);
+                const misses = 100 - hits;
+
+                cacheChart.data.datasets[0].data = [hits, misses];
+                cacheChart.update();
+            }
+
+            // Обновляем график БД (реальные данные)
+            const dbStats = metrics.metrics?.performance?.database;
+            if (dbStats) {
+                const now = new Date().toLocaleTimeString();
+                const activeConnections = dbStats.active_connections || 0;
+
+                dbChart.data.labels.push(now);
+                dbChart.data.datasets[0].data.push(activeConnections);
+
+                // Ограничиваем количество точек
+                if (dbChart.data.labels.length > 10) {
+                    dbChart.data.labels.shift();
+                    dbChart.data.datasets[0].data.shift();
+                }
+
+                dbChart.update();
+            }
+        }
+
+        function updateSystemInfo(metrics) {
+            // Запросы к БД
+            const totalQueries = metrics.metrics?.performance?.database?.total_queries || 0;
+            document.getElementById('total-queries').textContent = totalQueries;
+
+            // Медленные запросы
+            const slowQueries = metrics.metrics?.performance?.database?.slow_queries || 0;
+            document.getElementById('slow-queries').textContent = slowQueries;
+
+            // Размер кэша
+            const cacheSize = metrics.metrics?.performance?.cache?.memory_cache_size || 0;
+            document.getElementById('cache-size').textContent = cacheSize;
+
+            // Время работы
+            const uptimeSeconds = metrics.metrics?.system?.uptime_seconds || 0;
+            const uptimeHours = Math.floor(uptimeSeconds / 3600);
+            const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
+            document.getElementById('uptime').textContent = `${uptimeHours}ч ${uptimeMinutes}м`;
+        }
+    </script>
+{% endblock %}

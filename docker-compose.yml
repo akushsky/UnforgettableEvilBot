@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsapp-digest-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=unforgettable_evil_bot
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d unforgettable_evil_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp-network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-digest-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp-network
+
+  # Main application
+  whatsapp-digest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-digest-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"  # FastAPI
+      - "3000:3000"  # WhatsApp Bridge
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/unforgettable_evil_bot
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SECRET_KEY=${SECRET_KEY}
+      - PYTHON_BACKEND_URL=http://localhost:8000
+    volumes:
+      - ./whatsapp_sessions:/app/whatsapp_sessions
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - whatsapp-network
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  whatsapp-network:
+    driver: bridge

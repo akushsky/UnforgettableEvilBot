@@ -1,0 +1,1408 @@
+{% extends "base.html" %}
+
+{% block title %}{{ user.username }} - WhatsApp Digest Admin{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/">Главная</a></li>
+                <li class="breadcrumb-item"><a href="/admin/users">Пользователи</a></li>
+                <li class="breadcrumb-item active">{{ user.username }}</li>
+            </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1><i class="fas fa-user"></i> {{ user.username }}</h1>
+                <p class="text-muted">Управление пользователем и настройками WhatsApp</p>
+            </div>
+            <div>
+                {% if user.is_active %}
+                    <span class="badge bg-success fs-6">Активен</span>
+                {% else %}
+                    <span class="badge bg-danger fs-6">Неактивен</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Информационные карточки -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">
+                <h6 class="mb-0"><i class="fas fa-info-circle"></i> Основная информация</h6>
+            </div>
+            <div class="card-body">
+                <p><strong>ID:</strong> {{ user.id }}</p>
+                <p><strong>Email:</strong> {{ user.email }}</p>
+                <p><strong>Создан:</strong> {{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</p>
+                <p><strong>Интервал дайджеста:</strong> {{ user.digest_interval_hours }} часов</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h6 class="mb-0"><i class="fab fa-whatsapp"></i> WhatsApp статус</h6>
+            </div>
+            <div class="card-body">
+                {% if user.whatsapp_connected %}
+                    <div class="text-success">
+                        <i class="fas fa-check-circle"></i> <strong>Подключен</strong>
+                    </div>
+                    <p class="mt-2"><strong>Сессия:</strong> {{ user.whatsapp_session_id }}</p>
+                    <button class="btn btn-outline-success btn-sm" onclick="checkWhatsAppStatus()">
+                        <i class="fas fa-sync"></i> Проверить статус
+                    </button>
+                {% else %}
+                    <div class="text-danger">
+                        <i class="fas fa-times-circle"></i> <strong>Не подключен</strong>
+                    </div>
+                    <p class="mt-2">Необходимо отсканировать QR-код</p>
+                    <button class="btn btn-success btn-sm" onclick="generateQRCode()">
+                        <i class="fas fa-qrcode"></i> Получить QR-код
+                    </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-info">
+            <div class="card-header bg-info text-white">
+                <h6 class="mb-0"><i class="fab fa-telegram"></i> Telegram настройки</h6>
+            </div>
+            <div class="card-body">
+                {% if user.telegram_channel_id %}
+                    <div class="text-info">
+                        <i class="fas fa-check-circle"></i> <strong>Настроен</strong>
+                    </div>
+                    <p class="mt-2"><strong>Канал:</strong> {{ user.telegram_channel_id }}</p>
+                {% else %}
+                    <div class="text-warning">
+                        <i class="fas fa-exclamation-circle"></i> <strong>Не настроен</strong>
+                    </div>
+                    <p class="mt-2">Необходимо указать канал</p>
+                {% endif %}
+                <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                    <i class="fas fa-cog"></i> Настроить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Управление дайджестом -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h6 class="mb-0"><i class="fas fa-file-alt"></i> Управление дайджестом</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h6>Немедленная генерация дайджеста</h6>
+                        <p class="text-muted mb-0">Создать и отправить дайджест сейчас, не дожидаясь планового времени</p>
+                        <small class="text-muted">
+                            {% if user.telegram_channel_id and user.whatsapp_connected %}
+                                <i class="fas fa-check text-success"></i> Все настройки готовы для отправки
+                            {% else %}
+                                <i class="fas fa-exclamation-triangle text-warning"></i>
+                                {% if not user.whatsapp_connected %}WhatsApp не подключен. {% endif %}
+                                {% if not user.telegram_channel_id %}Telegram канал не настроен.{% endif %}
+                            {% endif %}
+                        </small>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <button class="btn btn-warning"
+                                onclick="generateImmediateDigest({{ user.id }})"
+                                {% if not (user.telegram_channel_id and user.whatsapp_connected) %}disabled{% endif %}
+                                id="generate-digest-btn">
+                            <i class="fas fa-bolt"></i> Сформировать дайджест
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Информация о последнем дайджесте -->
+                <hr class="my-3">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-history"></i> Последний дайджест</h6>
+                        {% if last_digest %}
+                            <div class="d-flex align-items-center">
+                                <div class="me-3">
+                                    {% if last_digest.telegram_sent %}
+                                        <i class="fas fa-check-circle text-success fa-2x"></i>
+                                    {% else %}
+                                        <i class="fas fa-times-circle text-danger fa-2x"></i>
+                                    {% endif %}
+                                </div>
+                                <div>
+                                    <strong>{{ last_digest.created_at.strftime('%d.%m.%Y %H:%M') }}</strong><br>
+                                    <small class="text-muted">
+                                        {{ last_digest.message_count }} сообщений
+                                        {% if last_digest.telegram_sent %}
+                                            • <span class="text-success">✅ Отправлен</span>
+                                        {% else %}
+                                            • <span class="text-danger">❌ Не отправлен</span>
+                                        {% endif %}
+                                    </small>
+                                </div>
+                            </div>
+                        {% else %}
+                            <div class="text-muted">
+                                <i class="fas fa-info-circle"></i> Дайджесты еще не создавались
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-chart-bar"></i> Статистика дайджестов</h6>
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <div class="border rounded p-2">
+                                    <div class="h5 mb-0 text-primary">{{ total_digests }}</div>
+                                    <small class="text-muted">Всего дайджестов</small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="border rounded p-2">
+                                    <div class="h5 mb-0 text-success">{{ successful_digests }}</div>
+                                    <small class="text-muted">Успешно отправлено</small>
+                                </div>
+                            </div>
+                        </div>
+                        {% if total_digests > 0 %}
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    Процент успешности: {{ "%.1f"|format(successful_digests / total_digests * 100) }}%
+                                </small>
+                            </div>
+                        {% endif %}
+                        <div class="mt-2">
+                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#digestsHistoryModal" onclick="loadDigestsHistory()">
+                                <i class="fas fa-list"></i> Просмотреть все дайджесты
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Системные настройки -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-info">
+            <div class="card-header bg-info text-white">
+                <h6 class="mb-0"><i class="fas fa-cogs"></i> Системные настройки</h6>
+            </div>
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6>Системные настройки</h6>
+                        <p class="text-muted mb-0">Настройте параметры работы системы, фильтрацию сообщений и автоматическую очистку данных</p>
+                        <small class="text-muted">
+                            <i class="fas fa-clock"></i> Очистка выполняется ежедневно в 3:00 утра
+                        </small>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <button class="btn btn-info" data-bs-toggle="modal" data-bs-target="#cleanupSettingsModal">
+                            <i class="fas fa-cogs"></i> Настройки системы
+                        </button>
+                        <button class="btn btn-outline-info ms-2" onclick="runManualCleanup()">
+                            <i class="fas fa-broom"></i> Очистить сейчас
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- QR-код и управление WhatsApp -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-qrcode"></i> QR-код для подключения WhatsApp</h5>
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#" onclick="refreshQRCode()"><i class="fas fa-sync"></i> Обновить QR</a></li>
+                        <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#sendQRModal"><i class="fas fa-envelope"></i> Отправить по email</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="#" onclick="downloadQRCode()"><i class="fas fa-download"></i> Скачать QR</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="card-body text-center">
+                <div id="qr-container">
+                    {% if not user.whatsapp_connected %}
+                        <div class="py-4" id="qr-placeholder">
+                            <i class="fas fa-qrcode fa-4x text-muted mb-3"></i>
+                            <h6 class="text-muted">QR-код не сгенерирован</h6>
+                            <p class="text-muted">Нажмите кнопку ниже для генерации QR-кода</p>
+                            <button class="btn btn-success" onclick="generateQRCode()" id="generate-qr-btn">
+                                <i class="fas fa-qrcode"></i> Сгенерировать QR-код
+                            </button>
+                        </div>
+                    {% else %}
+                        <div class="py-4">
+                            <i class="fas fa-check-circle fa-4x text-success mb-3"></i>
+                            <h6 class="text-success">WhatsApp подключен!</h6>
+                            <p class="text-muted">QR-код больше не нужен</p>
+                        </div>
+                    {% endif %}
+                </div>
+
+                <!-- Progress bar для генерации QR -->
+                <div id="qr-progress" class="progress mb-3" style="display: none;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                         style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        Генерация QR-кода...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-comments"></i> Доступные чаты</h5>
+            </div>
+            <div class="card-body">
+                <div id="available-chats-container" style="max-height: 400px; overflow-y: auto;">
+                    {% if user.whatsapp_connected %}
+                        <button class="btn btn-primary" onclick="loadAvailableChats()">
+                            <i class="fas fa-refresh"></i> Загрузить чаты из WhatsApp
+                        </button>
+                    {% else %}
+                        <div class="text-center py-3">
+                            <i class="fas fa-info-circle text-muted"></i>
+                            <p class="text-muted">Сначала подключите WhatsApp</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Отслеживаемые чаты -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-eye"></i> Отслеживаемые чаты</h5>
+                <span class="badge bg-primary">{{ monitored_chats|length }} чатов</span>
+            </div>
+            <div class="card-body">
+                {% if monitored_chats %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Тип</th>
+                                    <th>ID чата</th>
+                                    <th>Добавлен</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for chat in monitored_chats %}
+                                <tr>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <div class="chat-icon me-2">
+                                                {% if chat.chat_type == 'group' %}
+                                                    <i class="fas fa-users text-primary"></i>
+                                                {% else %}
+                                                    <i class="fas fa-user text-success"></i>
+                                                {% endif %}
+                                            </div>
+                                            <strong>{{ chat.chat_name }}</strong>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if chat.chat_type == 'group' %}
+                                            <span class="badge bg-primary">Группа</span>
+                                        {% else %}
+                                            <span class="badge bg-success">Личный</span>
+                                        {% endif %}
+                                    </td>
+                                    <td><small class="text-muted">{{ chat.chat_id }}</small></td>
+                                    <td><small class="text-muted">{{ chat.created_at.strftime('%d.%m.%Y') }}</small></td>
+                                    <td>
+                                        <form action="/admin/users/{{ user.id }}/chats/{{ chat.id }}/remove" method="post" style="display: inline;">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                    onclick="return confirm('Удалить чат из мониторинга?')" title="Удалить из мониторинга">
+                                                <i class="fas fa-trash"></i>
+                                            </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="fas fa-comments fa-3x text-muted mb-3"></i>
+                        <h6 class="text-muted">Чаты для мониторинга не выбраны</h6>
+                        <p class="text-muted">Загрузите доступные чаты из WhatsApp и добавьте их для отслеживания</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно настроек пользователя -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="/admin/users/{{ user.id }}/settings" method="post">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cog"></i> Настройки пользователя</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="telegram_channel_id" class="form-label">
+                            <i class="fab fa-telegram"></i> Telegram канал/чат ID
+                        </label>
+                        <input type="text" class="form-control" id="telegram_channel_id" name="telegram_channel_id"
+                               value="{{ user.telegram_channel_id or '' }}" placeholder="@channel или -1001234567890">
+                        <div class="form-text">ID канала или чата для отправки дайджестов</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="digest_interval_hours" class="form-label">
+                            <i class="fas fa-clock"></i> Интервал дайджеста (часы)
+                        </label>
+                        <select class="form-control" id="digest_interval_hours" name="digest_interval_hours">
+                            <option value="1" {{ "selected" if user.digest_interval_hours == 1 else "" }}>1 час</option>
+                            <option value="2" {{ "selected" if user.digest_interval_hours == 2 else "" }}>2 часа</option>
+                            <option value="4" {{ "selected" if user.digest_interval_hours == 4 else "" }}>4 часа</option>
+                            <option value="6" {{ "selected" if user.digest_interval_hours == 6 else "" }}>6 часов</option>
+                            <option value="12" {{ "selected" if user.digest_interval_hours == 12 else "" }}>12 часов</option>
+                            <option value="24" {{ "selected" if user.digest_interval_hours == 24 else "" }}>24 часа</option>
+                        </select>
+                    </div>
+                </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить настройки</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для просмотра всех дайджестов -->
+<div class="modal fade" id="digestsHistoryModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-history"></i> История дайджестов</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="digestsHistoryContent">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        <p class="mt-2">Загрузка истории дайджестов...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно настроек очистки данных -->
+<div class="modal fade" id="cleanupSettingsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="cleanupSettingsForm">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cogs"></i> Настройки системы</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Системные настройки</strong><br>
+                        Настройте параметры работы системы, включая автоматическую очистку данных, фильтрацию сообщений и уведомления.
+                        Очистка выполняется ежедневно в 3:00 утра.
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_message_age_hours" class="form-label">
+                                    <i class="fas fa-clock"></i> Максимальный возраст сообщений (часы)
+                                </label>
+                                <select class="form-control" id="max_message_age_hours" name="max_message_age_hours">
+                                    <option value="12">12 часов</option>
+                                    <option value="24" selected>24 часа</option>
+                                    <option value="48">48 часов</option>
+                                    <option value="72">72 часа (3 дня)</option>
+                                    <option value="168">168 часов (7 дней)</option>
+                                    <option value="720">720 часов (30 дней)</option>
+                                </select>
+                                <div class="form-text">Сообщения старше указанного времени будут автоматически удалены</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="min_importance_level" class="form-label">
+                                    <i class="fas fa-star"></i> Минимальный уровень важности
+                                </label>
+                                <select class="form-control" id="min_importance_level" name="min_importance_level">
+                                    <option value="1">1 - Очень низкий</option>
+                                    <option value="2">2 - Низкий</option>
+                                    <option value="3" selected>3 - Средний</option>
+                                    <option value="4">4 - Высокий</option>
+                                    <option value="5">5 - Критический</option>
+                                </select>
+                                <div class="form-text">Минимальный уровень важности для включения в дайджест</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="include_media_messages" name="include_media_messages" checked>
+                                    <label class="form-check-label" for="include_media_messages">
+                                        <i class="fas fa-image"></i> Включать медиа-сообщения
+                                    </label>
+                                </div>
+                                <div class="form-text">Включать сообщения с изображениями, видео и файлами</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="urgent_notifications" name="urgent_notifications" checked>
+                                    <label class="form-check-label" for="urgent_notifications">
+                                        <i class="fas fa-bell"></i> Срочные уведомления
+                                    </label>
+                                </div>
+                                <div class="form-text">Отправлять уведомления о важных событиях</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="daily_summary" name="daily_summary" checked>
+                                    <label class="form-check-label" for="daily_summary">
+                                        <i class="fas fa-calendar-day"></i> Ежедневные сводки
+                                    </label>
+                                </div>
+                                <div class="form-text">Получать ежедневные сводки о результатах очистки</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="auto_add_new_chats" name="auto_add_new_chats">
+                                    <label class="form-check-label" for="auto_add_new_chats">
+                                        <i class="fas fa-plus-circle"></i> Автоматически добавлять новые чаты
+                                    </label>
+                                </div>
+                                <div class="form-text">Автоматически добавлять новые чаты в мониторинг</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="auto_add_group_chats_only" name="auto_add_group_chats_only" checked>
+                            <label class="form-check-label" for="auto_add_group_chats_only">
+                                <i class="fas fa-users"></i> Добавлять только групповые чаты
+                            </label>
+                        </div>
+                        <div class="form-text">При автоматическом добавлении включать только групповые чаты</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Сохранить настройки очистки
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для просмотра содержимого дайджеста -->
+<div class="modal fade" id="digestContentModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="digestContentTitle">
+                    <i class="fas fa-file-alt"></i> Содержимое дайджеста
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="digestContentBody" style="white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow-y: auto;">
+                    <!-- Содержимое дайджеста будет загружено сюда -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для отправки QR-кода -->
+<div class="modal fade" id="sendQRModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-envelope"></i> Отправить QR-код клиенту</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/{{ user.id }}/qr/send" method="post">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="client-email" class="form-label">Email клиента</label>
+                        <input type="email" class="form-control" id="client-email" name="email"
+                               value="{{ user.email }}" required>
+                        <div class="form-text">QR-код будет отправлен на указанный email</div>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Инструкция для клиента:</strong><br>
+                        1. Откройте WhatsApp на телефоне<br>
+                        2. Перейдите в Настройки → Связанные устройства<br>
+                        3. Нажмите "Привязать устройство"<br>
+                        4. Отсканируйте полученный QR-код
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-paper-plane"></i> Отправить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentQRCode = null;
+let qrCheckInterval = null;
+
+async function generateQRCode() {
+    const button = document.getElementById('generate-qr-btn');
+    const container = document.getElementById('qr-container');
+    const progressBar = document.getElementById('qr-progress');
+
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Инициализация...';
+    }
+
+    // Показываем прогресс бар
+    if (progressBar) {
+        progressBar.style.display = 'block';
+        animateProgressBar();
+    }
+
+    try {
+        // Шаг 1: Инициализируем WhatsApp клиент
+        const response = await fetch(`/admin/users/{{ user.id }}/qr`);
+        const result = await response.json();
+
+        if (result.status === 'success' && result.qr_code) {
+            // QR-код уже готов!
+            displayQRCode(result.qr_code, result.timestamp);
+            startQRCodeMonitoring();
+        } else if (result.status === 'pending' || result.status === 'success') {
+            // Клиент инициализирован, ждем QR-код
+            showWaitingForQR();
+            startQRCodeCheck();
+        } else {
+            showError(result.message);
+        }
+    } catch (error) {
+        showError('Ошибка подключения: ' + error.message);
+    } finally {
+        if (progressBar) {
+            progressBar.style.display = 'none';
+        }
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-qrcode"></i> Сгенерировать QR-код';
+        }
+    }
+}
+
+function displayQRCode(qrCodeDataUrl, timestamp) {
+    const container = document.getElementById('qr-container');
+    currentQRCode = qrCodeDataUrl;
+
+    container.innerHTML = `
+        <div class="qr-code-display">
+            <div class="mb-3">
+                <img src="${qrCodeDataUrl}" alt="WhatsApp QR Code"
+                     class="img-fluid border rounded shadow"
+                     style="max-width: 256px; max-height: 256px;">
+            </div>
+            <h6 class="text-success">
+                <i class="fas fa-qrcode"></i> QR-код готов к сканированию
+            </h6>
+            <p class="text-muted small">
+                Создан: ${new Date(timestamp).toLocaleString('ru-RU')}
+            </p>
+            <div class="d-flex gap-2 justify-content-center flex-wrap">
+                <button class="btn btn-outline-success btn-sm" onclick="refreshQRCode()" title="Обновить QR-код">
+                    <i class="fas fa-sync"></i>
+                </button>
+                <button class="btn btn-outline-primary btn-sm" onclick="downloadQRCode()" title="Скачать QR-код">
+                    <i class="fas fa-download"></i>
+                </button>
+                <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#sendQRModal" title="Отправить по email">
+                    <i class="fas fa-envelope"></i>
+                </button>
+            </div>
+
+            <!-- Элемент для отображения прогресса мониторинга -->
+            <div class="monitoring-progress"></div>
+
+            <div class="mt-3">
+                <div class="alert alert-warning">
+                    <i class="fas fa-mobile-alt"></i> <strong>Инструкция:</strong>
+                    <ol class="mb-0 mt-2">
+                        <li>Откройте WhatsApp на телефоне</li>
+                        <li>Меню → "Связанные устройства"</li>
+                        <li>"Привязать устройство"</li>
+                        <li>Отсканируйте этот QR-код</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Добавляем класс для анимации появления
+    container.classList.add('has-qr');
+}
+
+function showWaitingForQR() {
+    const container = document.getElementById('qr-container');
+    container.innerHTML = `
+        <div class="py-4">
+            <div class="mb-3">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+            </div>
+            <h6 class="text-primary">Генерация QR-кода...</h6>
+            <p class="text-muted">Инициализация WhatsApp Web и создание QR-кода...</p>
+            <div class="progress mt-3" style="height: 6px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated"
+                     role="progressbar" style="width: 100%"></div>
+            </div>
+        </div>
+    `;
+}
+
+function startQRCodeCheck() {
+    if (qrCheckInterval) {
+        clearInterval(qrCheckInterval);
+    }
+
+    let attempts = 0;
+    const maxAttempts = 30; // Максимум 1 минута ожидания
+
+    qrCheckInterval = setInterval(async () => {
+        attempts++;
+        try {
+            const response = await fetch(`/admin/users/{{ user.id }}/qr/check`);
+            const result = await response.json();
+
+            if (result.status === 'ready' && result.qr_code) {
+                displayQRCode(result.qr_code, result.timestamp);
+                clearInterval(qrCheckInterval);
+                startQRCodeMonitoring();
+            } else if (attempts >= maxAttempts) {
+                // Тайм-аут
+                clearInterval(qrCheckInterval);
+                showError('Время ожидания QR-кода истекло. Попробуйте еще раз.');
+            } else {
+                // Обновляем прогресс
+                updateWaitingProgress(attempts, maxAttempts);
+            }
+        } catch (error) {
+            console.error('QR check error:', error);
+            if (attempts >= maxAttempts) {
+                clearInterval(qrCheckInterval);
+                showError('Ошибка получения QR-кода: ' + error.message);
+            }
+        }
+    }, 2000); // Проверяем каждые 2 секунды
+}
+
+function updateWaitingProgress(attempts, maxAttempts) {
+    const container = document.getElementById('qr-container');
+    const progressPercent = (attempts / maxAttempts) * 100;
+
+    container.innerHTML = `
+        <div class="py-4">
+            <div class="mb-3">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+            </div>
+            <h6 class="text-primary">Генерация QR-кода... (${attempts}/${maxAttempts})</h6>
+            <p class="text-muted">Ожидание подключения к WhatsApp Web...</p>
+            <div class="progress mt-3" style="height: 8px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                     role="progressbar" style="width: ${progressPercent}%"></div>
+            </div>
+            <small class="text-muted">Осталось попыток: ${maxAttempts - attempts}</small>
+        </div>
+    `;
+}
+
+function startQRCodeMonitoring() {
+    // Мониторинг подключения WhatsApp для конкретного пользователя
+    let checkCount = 0;
+    const maxChecks = 60; // 5 минут при проверке каждые 5 секунд
+
+    const monitorInterval = setInterval(async () => {
+        checkCount++;
+
+        try {
+            // Используем новый эндпоинт без аутентификации
+            const response = await fetch(`/admin/users/{{ user.id }}/whatsapp/status`);
+            const result = await response.json();
+
+            // Проверяем, что именно этот пользователь подключился
+            if (result.whatsapp_connected === true || result.bridge_connected === true) {
+                // WhatsApp подключен для этого пользователя!
+                clearInterval(monitorInterval);
+                showSuccessConnection();
+
+                // Обновляем статус в базе данных через специальный эндпоинт
+                try {
+                    await fetch(`/admin/users/{{ user.id }}/whatsapp/update-status`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ connected: true })
+                    });
+                } catch (updateError) {
+                    console.warn('Failed to update status in database:', updateError);
+                }
+
+                setTimeout(() => location.reload(), 3000);
+                return;
+            }
+
+            console.log(`[DEBUG] Status check ${checkCount}: DB=${result.whatsapp_connected}, Bridge=${result.bridge_connected}`);
+
+        } catch (error) {
+            console.error('Status check error:', error);
+        }
+
+        // Останавливаем проверку через 5 минут
+        if (checkCount >= maxChecks) {
+            clearInterval(monitorInterval);
+            showTimeoutMessage();
+        }
+
+    }, 5000); // Проверяем каждые 5 секунд
+
+    // Показываем прогресс пользователю
+    updateMonitoringProgress(0, maxChecks);
+
+    // Обновляем прогресс каждые 5 секунд
+    const progressInterval = setInterval(() => {
+        if (checkCount < maxChecks) {
+            updateMonitoringProgress(checkCount, maxChecks);
+        } else {
+            clearInterval(progressInterval);
+        }
+    }, 5000);
+}
+
+function updateMonitoringProgress(current, total) {
+    const container = document.getElementById('qr-container');
+    const progressElement = container.querySelector('.monitoring-progress');
+
+    if (progressElement) {
+        const percentage = (current / total) * 100;
+        const remainingTime = Math.ceil((total - current) * 5 / 60); // в минутах
+
+        progressElement.innerHTML = `
+            <div class="mt-3">
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar bg-info" role="progressbar"
+                         style="width: ${percentage}%"
+                         aria-valuenow="${current}"
+                         aria-valuemin="0"
+                         aria-valuemax="${total}">
+                    </div>
+                </div>
+                <small class="text-muted mt-2 d-block">
+                    <i class="fas fa-clock"></i> Ожидание сканирования QR-кода...
+                    Осталось ~${remainingTime} мин.
+                </small>
+            </div>
+        `;
+    }
+}
+
+function showTimeoutMessage() {
+    const container = document.getElementById('qr-container');
+    container.innerHTML = `
+        <div class="py-4">
+            <i class="fas fa-clock fa-4x text-warning mb-3"></i>
+            <h6 class="text-warning">Время ожидания истекло</h6>
+            <p class="text-muted">QR-код не был отсканирован в течение 5 минут.</p>
+            <div class="d-flex gap-2 justify-content-center">
+                <button class="btn btn-outline-primary" onclick="generateQRCode()">
+                    <i class="fas fa-refresh"></i> Создать новый QR-код
+                </button>
+                <button class="btn btn-outline-secondary" onclick="location.reload()">
+                    <i class="fas fa-sync"></i> Обновить страницу
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function showSuccessConnection() {
+    const container = document.getElementById('qr-container');
+    container.innerHTML = `
+        <div class="py-4 fade-in-up">
+            <i class="fas fa-check-circle fa-4x text-success mb-3"></i>
+            <h5 class="text-success">WhatsApp успешно подключен!</h5>
+            <p class="text-muted">Страница будет обновлена автоматически...</p>
+            <div class="spinner-border text-success" role="status">
+                <span class="visually-hidden">Обновление...</span>
+            </div>
+        </div>
+    `;
+}
+
+function showError(message) {
+    const container = document.getElementById('qr-container');
+    container.innerHTML = `
+        <div class="py-4">
+            <i class="fas fa-exclamation-triangle fa-4x text-danger mb-3"></i>
+            <h6 class="text-danger">Ошибка генерации QR-кода</h6>
+            <p class="text-muted">${message}</p>
+            <button class="btn btn-outline-primary" onclick="generateQRCode()">
+                <i class="fas fa-retry"></i> Попробовать снова
+            </button>
+        </div>
+    `;
+}
+
+function animateProgressBar() {
+    const progressBar = document.querySelector('#qr-progress .progress-bar');
+    if (progressBar) {
+        let progress = 0;
+        const interval = setInterval(() => {
+            progress += 10;
+            progressBar.style.width = progress + '%';
+            if (progress >= 100) {
+                clearInterval(interval);
+                progressBar.style.width = '100%';
+                progressBar.textContent = 'Готово!';
+            }
+        }, 200);
+    }
+}
+
+async function refreshQRCode() {
+    await generateQRCode();
+}
+
+function downloadQRCode() {
+    if (currentQRCode) {
+        const link = document.createElement('a');
+        link.href = currentQRCode;
+        link.download = `whatsapp_qr_code_user_{{ user.id }}_${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // Показываем уведомление
+        showToast('QR-код скачан успешно!', 'success');
+    } else {
+        showToast('Сначала сгенерируйте QR-код', 'warning');
+    }
+}
+
+async function sendQRCode(event) {
+    event.preventDefault();
+    const email = document.getElementById('recipient-email').value;
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+
+    if (!currentQRCode) {
+        showToast('Сначала сгенерируйте QR-код', 'warning');
+        return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Отправка...';
+
+    try {
+        const formData = new FormData();
+        formData.append('email', email);
+
+        const response = await fetch(`/admin/users/{{ user.id }}/qr/send`, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            showToast('QR-код успешно отправлен на ' + email, 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('sendQRModal'));
+            modal.hide();
+        } else {
+            showToast('Ошибка отправки: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        showToast('Ошибка отправки: ' + error.message, 'danger');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Отправить QR-код';
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Создаем toast уведомление
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+
+    // Добавляем в контейнер
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container position-fixed top-0 end-0 p-3';
+        container.style.zIndex = '1060';
+        document.body.appendChild(container);
+    }
+
+    container.appendChild(toast);
+
+    // Показываем toast
+    const bsToast = new bootstrap.Toast(toast, { delay: 5000 });
+    bsToast.show();
+
+    // Удаляем после скрытия
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+
+// Остальные функции...
+async function loadAvailableChats() {
+    const container = document.getElementById('available-chats-container');
+    container.innerHTML = '<div class="text-center py-3"><i class="fas fa-spinner fa-spin"></i> Загрузка чатов...</div>';
+
+    try {
+        const response = await fetch(`/admin/users/{{ user.id }}/chats`);
+        const result = await response.json();
+
+        if (result.status === 'success' && result.chats.length > 0) {
+            let html = '<div class="mb-3"><h6>Доступные чаты:</h6></div>';
+
+            result.chats.forEach(chat => {
+                // Fix: Convert isGroup boolean to type string
+                const chatType = chat.isGroup ? 'group' : 'private';
+                const icon = chatType === 'group' ? 'fa-users' : 'fa-user';
+                const badgeClass = chatType === 'group' ? 'bg-primary' : 'bg-success';
+                const badgeText = chatType === 'group' ? 'Группа' : 'Личный';
+
+                html += `
+                    <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+                        <div class="d-flex align-items-center">
+                            <i class="fas ${icon} me-2"></i>
+                            <div>
+                                <strong>${chat.name}</strong>
+                                <br><small class="text-muted">${chat.id}</small>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <span class="badge ${badgeClass} me-2">${badgeText}</span>
+                            <button class="btn btn-sm btn-outline-success" onclick="addChatToMonitoring('${chat.id}', '${chat.name}', '${chatType}')">
+                                <i class="fas fa-plus"></i> Добавить
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        } else if (result.status === 'success' && result.chats.length === 0) {
+            container.innerHTML = '<div class="text-center py-3"><i class="fas fa-info-circle text-muted"></i><p class="text-muted">Чатов не найдено</p></div>';
+        } else {
+            container.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> ${result.message}</div>`;
+        }
+    } catch (error) {
+        container.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Ошибка загрузки: ${error.message}</div>`;
+    }
+}
+
+function addChatToMonitoring(chatId, chatName, chatType) {
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/admin/users/{{ user.id }}/chats/add`;
+
+    const chatIdInput = document.createElement('input');
+    chatIdInput.type = 'hidden';
+    chatIdInput.name = 'chat_id';
+    chatIdInput.value = chatId;
+
+    const chatNameInput = document.createElement('input');
+    chatNameInput.type = 'hidden';
+    chatNameInput.name = 'chat_name';
+    chatNameInput.value = chatName;
+
+    const chatTypeInput = document.createElement('input');
+    chatTypeInput.type = 'hidden';
+    chatTypeInput.name = 'chat_type';
+    chatTypeInput.value = chatType;
+
+    form.appendChild(chatIdInput);
+    form.appendChild(chatNameInput);
+    form.appendChild(chatTypeInput);
+
+    document.body.appendChild(form);
+    form.submit();
+}
+
+async function checkWhatsAppStatus() {
+    try {
+        const response = await fetch(`/admin/system/status`);
+        const result = await response.json();
+
+        if (result.bridge.status === 'ok') {
+            alert(`Статус системы: Онлайн\nАктивных клиентов: ${result.bridge.clients}`);
+        } else {
+            alert('Система офлайн или есть проблемы с подключением');
+        }
+    } catch (error) {
+        alert('Ошибка проверки статуса: ' + error.message);
+    }
+}
+
+// Функция для немедленной генерации дайджеста
+async function generateImmediateDigest(userId) {
+    const button = document.getElementById('generate-digest-btn');
+
+    // Блокируем кнопку и показываем процесс
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Генерация дайджеста...';
+
+    try {
+        const response = await fetch(`/admin/users/${userId}/digest/generate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            showToast(result.message, 'success');
+            button.innerHTML = '<i class="fas fa-check"></i> Дайджест отправлен!';
+
+            // Возвращаем кнопку в исходное состояние через 3 секунды
+            setTimeout(() => {
+                button.disabled = false;
+                button.innerHTML = '<i class="fas fa-bolt"></i> Сформировать дайджест';
+            }, 3000);
+        } else {
+            showToast('Ошибка: ' + result.message, 'danger');
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-bolt"></i> Сформировать дайджест';
+        }
+    } catch (error) {
+        showToast('Ошибка генерации дайджеста: ' + error.message, 'danger');
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-bolt"></i> Сформировать дайджест';
+    }
+}
+
+// Функции для работы с системными настройками
+async function loadCleanupSettings() {
+    try {
+        const response = await fetch(`/admin/users/{{ user.id }}/cleanup-settings`);
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            const settings = result.settings;
+
+            // Заполняем форму текущими настройками
+            document.getElementById('max_message_age_hours').value = settings.max_message_age_hours;
+            document.getElementById('min_importance_level').value = settings.min_importance_level;
+            document.getElementById('include_media_messages').checked = settings.include_media_messages;
+            document.getElementById('urgent_notifications').checked = settings.urgent_notifications;
+            document.getElementById('daily_summary').checked = settings.daily_summary;
+            document.getElementById('auto_add_new_chats').checked = settings.auto_add_new_chats;
+            document.getElementById('auto_add_group_chats_only').checked = settings.auto_add_group_chats_only;
+        }
+    } catch (error) {
+        console.error('Error loading cleanup settings:', error);
+        showToast('Ошибка загрузки системных настроек', 'danger');
+    }
+}
+
+async function saveCleanupSettings(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
+
+    try {
+        const response = await fetch(`/admin/users/{{ user.id }}/cleanup-settings`, {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            showToast('Системные настройки сохранены успешно', 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('cleanupSettingsModal'));
+            modal.hide();
+        } else {
+            showToast('Ошибка сохранения системных настроек: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        showToast('Ошибка сохранения системных настроек: ' + error.message, 'danger');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить системные настройки';
+    }
+}
+
+async function runManualCleanup() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Очистка...';
+
+    try {
+        const response = await fetch('/admin/storage/cleanup', {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            const cleanup_results = result.cleanup_results;
+            const messages_deleted = cleanup_results.messages.messages_deleted || 0;
+            const digests_deleted = cleanup_results.digests.digests_deleted || 0;
+            const logs_deleted = cleanup_results.system_logs.logs_deleted || 0;
+
+            showToast(
+                `Очистка завершена! Удалено: ${messages_deleted} сообщений, ${digests_deleted} дайджестов, ${logs_deleted} логов`,
+                'success'
+            );
+        } else {
+            showToast('Ошибка очистки: ' + result.message, 'danger');
+        }
+    } catch (error) {
+        showToast('Ошибка выполнения очистки: ' + error.message, 'danger');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalText;
+    }
+}
+
+async function loadDigestsHistory() {
+    const contentDiv = document.getElementById('digestsHistoryContent');
+
+    try {
+        const response = await fetch(`/admin/users/{{ user.id }}/digests`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            const digests = result.digests;
+
+            if (digests.length === 0) {
+                contentDiv.innerHTML = `
+                    <div class="text-center py-4">
+                        <i class="fas fa-info-circle fa-3x text-muted mb-3"></i>
+                        <h6 class="text-muted">Дайджесты еще не создавались</h6>
+                        <p class="text-muted">Первый дайджест появится после обработки важных сообщений</p>
+                    </div>
+                `;
+            } else {
+                let html = `
+                    <div class="mb-3">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>История дайджестов пользователя {{ user.username }}</strong><br>
+                            Всего дайджестов: <strong>${result.total}</strong>
+                        </div>
+                    </div>
+                    <div class="row">
+                `;
+
+                digests.forEach((digest, index) => {
+                    const date = new Date(digest.created_at).toLocaleString('ru-RU');
+                    const status = digest.telegram_sent ? 'success' : 'danger';
+                    const statusIcon = digest.telegram_sent ? 'check-circle' : 'times-circle';
+                    const statusText = digest.telegram_sent ? 'Отправлен' : 'Не отправлен';
+
+                    html += `
+                        <div class="col-md-6 mb-3">
+                            <div class="card border-${status}">
+                                <div class="card-header bg-${status} text-white">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">Дайджест #${digest.id}</h6>
+                                        <i class="fas fa-${statusIcon}"></i>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-2">
+                                        <strong>Дата:</strong> ${date}
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Сообщений:</strong> ${digest.message_count}
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Статус:</strong>
+                                        <span class="badge bg-${status}">${statusText}</span>
+                                    </div>
+                                    <div class="mt-3">
+                                        <button class="btn btn-sm btn-outline-primary" onclick="viewDigestContent('${digest.id}', \`${digest.digest_content.replace(/`/g, '\\`')}\`)">
+                                            <i class="fas fa-eye"></i> Просмотреть содержимое
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+                contentDiv.innerHTML = html;
+            }
+        } else {
+            const errorMessage = result.message || 'Неизвестная ошибка';
+            contentDiv.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Ошибка загрузки дайджестов:</strong> ${errorMessage}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading digests:', error);
+        contentDiv.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>Ошибка загрузки дайджестов:</strong> ${error.message}
+            </div>
+        `;
+    }
+}
+
+function viewDigestContent(digestId, content) {
+    const modal = new bootstrap.Modal(document.getElementById('digestContentModal'));
+    document.getElementById('digestContentTitle').textContent = `Содержимое дайджеста #${digestId}`;
+    document.getElementById('digestContentBody').textContent = content;
+    modal.show();
+}
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    // Загружаем системные настройки при открытии модального окна
+    document.getElementById('cleanupSettingsModal').addEventListener('show.bs.modal', loadCleanupSettings);
+
+    // Обработчик отправки формы системных настроек
+    document.getElementById('cleanupSettingsForm').addEventListener('submit', saveCleanupSettings);
+});
+
+// Cleanup intervals при уходе со страницы
+window.addEventListener('beforeunload', () => {
+    if (qrCheckInterval) {
+        clearInterval(qrCheckInterval);
+    }
+});
+</script>
+
+<style>
+#qr-container.has-qr {
+    border-color: #28a745;
+    background-color: #f8fff9;
+}
+
+.qr-code-display {
+    animation: fadeInUp 0.5s ease;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in-up {
+    animation: fadeInUp 0.5s ease;
+}
+</style>
+{% endblock %}

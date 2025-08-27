@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Digest System - Главная панель</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .hero-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 4rem 0;
+        }
+
+        .stat-card {
+            transition: transform 0.2s;
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-icon {
+            font-size: 2.5rem;
+            opacity: 0.8;
+        }
+
+        .quick-action-card {
+            transition: all 0.3s;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .quick-action-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .health-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .health-healthy { background-color: #28a745; }
+        .health-warning { background-color: #ffc107; }
+        .health-error { background-color: #dc3545; }
+
+        .recent-activity {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            border-left: 3px solid #007bff;
+            padding-left: 15px;
+            margin-bottom: 15px;
+        }
+
+        .activity-item.success {
+            border-left-color: #28a745;
+        }
+
+        .activity-item.warning {
+            border-left-color: #ffc107;
+        }
+
+        .activity-item.error {
+            border-left-color: #dc3545;
+        }
+
+        .updating {
+            animation: pulse 0.6s ease-in-out;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <div class="hero-section">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h1 class="display-4 fw-bold mb-3">
+                        <i class="fab fa-whatsapp me-3"></i>
+                        WhatsApp Digest System
+                    </h1>
+                    <p class="lead mb-4">
+                        Интеллектуальная система мониторинга и анализа WhatsApp сообщений с автоматическим созданием дайджестов
+                    </p>
+                    <div class="d-flex gap-3">
+                        <a href="/admin/users" class="btn btn-light btn-lg">
+                            <i class="fas fa-users me-2"></i>Управление пользователями
+                        </a>
+                        <a href="/monitoring/dashboard" class="btn btn-outline-light btn-lg">
+                            <i class="fas fa-chart-line me-2"></i>Мониторинг системы
+                        </a>
+                        <button type="button" class="btn btn-outline-light btn-lg" onclick="refreshDashboardData()" title="Обновить данные">
+                            <i class="fas fa-sync-alt me-2"></i>Обновить
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-4 text-center">
+                    <i class="fas fa-robot fa-8x opacity-75"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container my-5">
+        {% if error %}
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Ошибка загрузки данных:</strong> {{ error }}
+        </div>
+        {% endif %}
+
+        <!-- System Statistics -->
+        <div class="row mb-5">
+            <div class="col-12">
+                <h2 class="mb-4">
+                    <i class="fas fa-chart-bar me-2"></i>Статистика системы
+                </h2>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-primary mb-2">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <h3 class="card-title text-primary" data-stat="user-count">{{ stats.user_count or 0 }}</h3>
+                        <p class="card-text text-muted">Пользователей</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-success mb-2">
+                            <i class="fas fa-user-check"></i>
+                        </div>
+                        <h3 class="card-title text-success" data-stat="active-users">{{ stats.active_users or 0 }}</h3>
+                        <p class="card-text text-muted">Активных</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-info mb-2">
+                            <i class="fas fa-comments"></i>
+                        </div>
+                        <h3 class="card-title text-info" data-stat="monitored-chats">{{ stats.monitored_chats or 0 }}</h3>
+                        <p class="card-text text-muted">Отслеживаемых чатов</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-warning mb-2">
+                            <i class="fas fa-envelope"></i>
+                        </div>
+                        <h3 class="card-title text-warning" data-stat="messages-24h">{{ stats.messages_24h or 0 }}</h3>
+                        <p class="card-text text-muted">Сообщений за 24ч</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-danger mb-2">
+                            <i class="fas fa-file-alt"></i>
+                        </div>
+                        <h3 class="card-title text-danger" data-stat="digests-24h">{{ stats.digests_24h or 0 }}</h3>
+                        <p class="card-text text-muted">Дайджестов за 24ч</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-secondary mb-2">
+                            <i class="fas fa-database"></i>
+                        </div>
+                        <h3 class="card-title text-secondary">{{ system_health.get('pool_info', {}).get('pool_size', 0) or 0 }}</h3>
+                        <p class="card-text text-muted">Размер пула БД</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-2 mb-3">
+                <div class="card stat-card text-center h-100">
+                    <div class="card-body">
+                        <div class="stat-icon text-success mb-2">
+                            <i class="fas fa-leaf"></i>
+                        </div>
+                        <h3 class="card-title text-success" data-stat="resource-savings-connections">{{ stats.resource_savings.total_whatsapp_connections_saved if stats.resource_savings else 0 }}</h3>
+                        <p class="card-text text-muted">Сохранено соединений</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="row mb-5">
+            <div class="col-12">
+                <h2 class="mb-4">
+                    <i class="fas fa-bolt me-2"></i>Быстрые действия
+                </h2>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card quick-action-card h-100">
+                    <div class="card-body text-center">
+                        <i class="fas fa-user-plus fa-3x text-primary mb-3"></i>
+                        <h5 class="card-title">Добавить пользователя</h5>
+                        <p class="card-text">Создать нового пользователя системы</p>
+                        <a href="/admin/users" class="btn btn-primary">
+                            <i class="fas fa-plus me-2"></i>Добавить
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card quick-action-card h-100">
+                    <div class="card-body text-center">
+                        <i class="fas fa-chart-line fa-3x text-success mb-3"></i>
+                        <h5 class="card-title">Мониторинг</h5>
+                        <p class="card-text">Просмотр метрик и состояния системы</p>
+                        <a href="/monitoring/dashboard" class="btn btn-success">
+                            <i class="fas fa-eye me-2"></i>Просмотреть
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card quick-action-card h-100">
+                    <div class="card-body text-center">
+                        <i class="fas fa-cogs fa-3x text-info mb-3"></i>
+                        <h5 class="card-title">Настройки</h5>
+                        <p class="card-text">Конфигурация системы и параметров</p>
+                        <a href="/admin/users" class="btn btn-info">
+                            <i class="fas fa-wrench me-2"></i>Настроить
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card quick-action-card h-100">
+                    <div class="card-body text-center">
+                        <i class="fas fa-broom fa-3x text-warning mb-3"></i>
+                        <h5 class="card-title">Очистка данных</h5>
+                        <p class="card-text">Управление хранением и очисткой</p>
+                        <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#cleanupModal">
+                            <i class="fas fa-trash me-2"></i>Очистить
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card quick-action-card h-100">
+                    <div class="card-body text-center">
+                        <i class="fas fa-leaf fa-3x text-success mb-3"></i>
+                        <h5 class="card-title">Экономия ресурсов</h5>
+                        <p class="card-text">Мониторинг экономии от suspended пользователей</p>
+                        <a href="/admin/resource-savings-page" class="btn btn-success">
+                            <i class="fas fa-chart-line me-2"></i>Просмотреть
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Health & Recent Activity -->
+        <div class="row">
+            <!-- System Health -->
+            <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-heartbeat me-2"></i>Состояние системы
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span>База данных</span>
+                                                                    <span>
+                                        <span class="health-indicator health-{{ 'healthy' if system_health.get('status') == 'healthy' else 'error' }}"></span>
+                                        {{ system_health.get('status', 'unknown') }}
+                                    </span>
+                            </div>
+                            <div class="progress mb-3" style="height: 6px;">
+                                <div class="progress-bar bg-success" style="width: {{ (system_health.get('pool_info', {}).get('checked_in', 0) / system_health.get('pool_info', {}).get('pool_size', 1) * 100) if system_health.get('pool_info') else 0 }}%"></div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span>Пул соединений</span>
+                                <span class="text-muted" id="poolConnections">{{ system_health.get('pool_info', {}).get('checked_in', 0) or 0 }}/{{ system_health.get('pool_info', {}).get('pool_size', 0) or 0 }}</span>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span>Размер БД</span>
+                                <span class="text-muted">{{ "%.1f"|format(system_health.get('pool_info', {}).get('pool_size', 0) / 1024) if system_health.get('pool_info') else 0 }} MB</span>
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#systemStatusModal">
+                            <i class="fas fa-info-circle me-2"></i>Подробнее
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Users -->
+            <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-users me-2"></i>Последние пользователи
+                        </h5>
+                    </div>
+                    <div class="card-body recent-activity">
+                        {% if recent_users %}
+                            {% for user in recent_users %}
+                            <div class="activity-item">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <strong>{{ user.username }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ user.email }}</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="badge bg-{{ 'success' if user.whatsapp_connected else 'secondary' }}">
+                                            {{ 'Подключен' if user.whatsapp_connected else 'Не подключен' }}
+                                        </span>
+                                        <br>
+                                        <small class="text-muted">{{ user.created_at.strftime('%d.%m.%Y') if user.created_at else '' }}</small>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="text-center text-muted py-4">
+                                <i class="fas fa-users fa-3x mb-3"></i>
+                                <p>Пользователи не найдены</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-footer">
+                        <a href="/admin/users" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-list me-2"></i>Все пользователи
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Digests -->
+            <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-file-alt me-2"></i>Последние дайджесты
+                        </h5>
+                    </div>
+                    <div class="card-body recent-activity">
+                        {% if recent_digests %}
+                            {% for digest in recent_digests %}
+                            <div class="activity-item {{ 'success' if digest.telegram_sent else 'warning' }}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <strong>{{ digest.username }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ digest.message_count }} сообщений</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="badge bg-{{ 'success' if digest.telegram_sent else 'warning' }}">
+                                            {{ 'Отправлен' if digest.telegram_sent else 'Не отправлен' }}
+                                        </span>
+                                        <br>
+                                        <small class="text-muted">{{ digest.created_at.strftime('%d.%m.%Y %H:%M') if digest.created_at else '' }}</small>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="text-center text-muted py-4">
+                                <i class="fas fa-file-alt fa-3x mb-3"></i>
+                                <p>Дайджесты не найдены</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-footer">
+                        <a href="/admin/users" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-list me-2"></i>Все дайджесты
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="row mt-5">
+            <div class="col-12">
+                <hr>
+                <div class="text-center text-muted">
+                    <p>
+                        <i class="fas fa-code me-2"></i>
+                        WhatsApp Digest System v1.0.0
+                        <span class="mx-2">•</span>
+                        <i class="fas fa-clock me-2"></i>
+                        <span id="currentTime">Текущее время</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Status Modal -->
+    <div class="modal fade" id="systemStatusModal" tabindex="-1" aria-labelledby="systemStatusModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="systemStatusModalLabel">
+                        <i class="fas fa-heartbeat text-primary me-2"></i>
+                        Состояние системы
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="systemStatusContent">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Загрузка...</span>
+                            </div>
+                            <p class="mt-2">Загрузка данных о состоянии системы...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                    <button type="button" class="btn btn-primary" onclick="refreshSystemStatus()">
+                        <i class="fas fa-sync-alt me-2"></i>Обновить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cleanup Modal -->
+    <div class="modal fade" id="cleanupModal" tabindex="-1" aria-labelledby="cleanupModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cleanupModalLabel">
+                        <i class="fas fa-broom text-warning me-2"></i>
+                        Очистка данных
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="cleanupContent">
+                        <div class="text-center">
+                            <div class="spinner-border text-warning" role="status">
+                                <span class="visually-hidden">Загрузка...</span>
+                            </div>
+                            <p class="mt-2">Загрузка статистики хранения...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                    <button type="button" class="btn btn-warning" onclick="runCleanup()">
+                        <i class="fas fa-broom me-2"></i>Выполнить очистку
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Smart dashboard refresh - update only necessary data
+        function refreshDashboardData() {
+            // Show loading indicator
+            const refreshButton = document.querySelector('button[onclick="refreshDashboardData()"]');
+            if (refreshButton) {
+                const originalContent = refreshButton.innerHTML;
+                refreshButton.disabled = true;
+                refreshButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Обновление...';
+
+                // Re-enable button after all updates complete
+                Promise.all([
+                    updateSystemHealth(),
+                    updateDashboardStats()
+                ]).finally(() => {
+                    refreshButton.disabled = false;
+                    refreshButton.innerHTML = originalContent;
+                });
+            } else {
+                // Fallback if button not found
+                updateSystemHealth();
+                updateDashboardStats();
+            }
+        }
+
+        // Refresh dashboard data every 30 seconds instead of full page reload
+        setInterval(refreshDashboardData, 30000);
+
+        // Add some interactivity
+        document.addEventListener('DOMContentLoaded', function() {
+            // Animate stat cards on scroll
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.style.opacity = '1';
+                        entry.target.style.transform = 'translateY(0)';
+                    }
+                });
+            });
+
+            document.querySelectorAll('.stat-card').forEach(card => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                card.style.transition = 'all 0.6s ease';
+                observer.observe(card);
+            });
+
+            // Load system status when modal opens
+            const systemStatusModal = document.getElementById('systemStatusModal');
+            systemStatusModal.addEventListener('show.bs.modal', function () {
+                loadSystemStatus();
+            });
+        });
+
+        // Function to load system status
+        function loadSystemStatus() {
+            fetch('/health')
+                .then(response => response.json())
+                .then(data => {
+                    const content = document.getElementById('systemStatusContent');
+
+                    let html = `
+                        <div class="row">
+                            <div class="col-12 mb-3">
+                                <div class="alert alert-${data.status === 'healthy' ? 'success' : 'danger'}">
+                                    <i class="fas fa-${data.status === 'healthy' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+                                    <strong>Статус системы:</strong> ${data.status === 'healthy' ? 'Работает' : 'Ошибка'}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-database me-2"></i>База данных</h6>
+                                <div class="mb-2">
+                                    <small class="text-muted">Статус:</small><br>
+                                    <span class="badge bg-${data.checks.database.status === 'healthy' ? 'success' : 'danger'}">
+                                        ${data.checks.database.status === 'healthy' ? 'Работает' : 'Ошибка'}
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Пул соединений:</small><br>
+                                    ${data.checks.database.pool_info.checked_in}/${data.checks.database.pool_info.pool_size}
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Активные соединения:</small><br>
+                                    ${data.checks.database.pool_info.checked_out}
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-cogs me-2"></i>Компоненты</h6>
+                                <div class="mb-2">
+                                    <small class="text-muted">Планировщик:</small><br>
+                                    <span class="badge bg-${data.checks.components.scheduler === 'healthy' ? 'success' : 'secondary'}">
+                                        ${data.checks.components.scheduler === 'healthy' ? 'Работает' : 'Отключен'}
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Метрики:</small><br>
+                                    <span class="badge bg-${data.checks.components.metrics === 'healthy' ? 'success' : 'secondary'}">
+                                        ${data.checks.components.metrics === 'healthy' ? 'Работает' : 'Отключен'}
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Асинхронный процессор:</small><br>
+                                    <span class="badge bg-${data.checks.components.async_processor === 'healthy' ? 'success' : 'secondary'}">
+                                        ${data.checks.components.async_processor === 'healthy' ? 'Работает' : 'Отключен'}
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Трассировка:</small><br>
+                                    <span class="badge bg-${data.checks.components.tracing === 'healthy' ? 'success' : 'secondary'}">
+                                        ${data.checks.components.tracing === 'healthy' ? 'Работает' : 'Отключен'}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <hr>
+                                <div class="text-muted">
+                                    <small>
+                                        <i class="fas fa-info-circle me-1"></i>
+                                        <strong>Сервис:</strong> ${data.service}<br>
+                                        <i class="fas fa-tag me-1"></i>
+                                        <strong>Версия:</strong> ${data.version}<br>
+                                        <i class="fas fa-clock me-1"></i>
+                                        <strong>Время:</strong> ${data.timestamp}
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    const content = document.getElementById('systemStatusContent');
+                    content.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Ошибка загрузки данных: ${error.message}
+                        </div>
+                    `;
+                });
+        }
+
+        // Function to refresh system status
+        function refreshSystemStatus() {
+            loadSystemStatus();
+        }
+
+        // Function to update pool connections on main page
+        function updatePoolConnections() {
+            fetch('/health')
+                .then(response => response.json())
+                .then(data => {
+                    const poolElement = document.getElementById('poolConnections');
+                    if (poolElement && data.checks && data.checks.database && data.checks.database.pool_info) {
+                        const poolInfo = data.checks.database.pool_info;
+                        poolElement.textContent = `${poolInfo.checked_in}/${poolInfo.pool_size}`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating pool connections:', error);
+                });
+        }
+
+        // Update pool connections every 10 seconds
+        setInterval(updatePoolConnections, 10000);
+
+        // Function to update system health data
+        function updateSystemHealth() {
+            return fetch('/health')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Health API response:', data); // Debug log
+
+                    // Update health indicators
+                    const healthIndicators = document.querySelectorAll('.health-indicator');
+                    healthIndicators.forEach(indicator => {
+                        indicator.classList.add('updating');
+                        indicator.className = `health-indicator health-${data.status === 'healthy' ? 'healthy' : 'error'}`;
+                        setTimeout(() => indicator.classList.remove('updating'), 600);
+                    });
+
+                    // Update pool connections (already handled by updatePoolConnections)
+
+                    // Update database size if available (only for specific elements)
+                    const dbSizeElements = document.querySelectorAll('.text-muted');
+                    dbSizeElements.forEach(element => {
+                        // Only update elements that are specifically for database size
+                        if (element.textContent.includes('MB') &&
+                            element.closest('.card-body') &&
+                            element.closest('.card-body').querySelector('.stat-icon .fa-database') &&
+                            data.checks && data.checks.database && data.checks.database.pool_info) {
+                            const poolSize = data.checks.database.pool_info.pool_size;
+                            const sizeInMB = (poolSize / 1024).toFixed(1);
+                            element.textContent = `${sizeInMB} MB`;
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error('Error updating system health:', error);
+                });
+        }
+
+        // Function to update dashboard statistics
+        function updateDashboardStats() {
+            return fetch('/metrics')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Metrics API response:', data); // Debug log
+
+                    // Extract data from nested structure
+                    const metrics = data.metrics || {};
+                    const users = metrics.users || {};
+                    const chats = metrics.chats || {};
+                    const messages = metrics.messages || {};
+                    const digests = metrics.digests || {};
+
+                    console.log('Extracted data:', { users, chats, messages, digests }); // Debug log
+
+                    // Update user count
+                    const userCountElement = document.querySelector('[data-stat="user-count"]');
+                    if (userCountElement) {
+                        userCountElement.classList.add('updating');
+                        userCountElement.textContent = users.total || 0;
+                        setTimeout(() => userCountElement.classList.remove('updating'), 600);
+                    }
+
+                    // Update active users count
+                    const activeUsersElement = document.querySelector('[data-stat="active-users"]');
+                    if (activeUsersElement) {
+                        activeUsersElement.classList.add('updating');
+                        activeUsersElement.textContent = users.active || 0;
+                        setTimeout(() => activeUsersElement.classList.remove('updating'), 600);
+                    }
+
+                    // Update monitored chats count
+                    const monitoredChatsElement = document.querySelector('[data-stat="monitored-chats"]');
+                    if (monitoredChatsElement) {
+                        monitoredChatsElement.classList.add('updating');
+                        monitoredChatsElement.textContent = chats.monitored || 0;
+                        setTimeout(() => monitoredChatsElement.classList.remove('updating'), 600);
+                    }
+
+                    // Update messages count
+                    const messagesElement = document.querySelector('[data-stat="messages-24h"]');
+                    if (messagesElement) {
+                        messagesElement.classList.add('updating');
+                        messagesElement.textContent = messages.last_24h || 0;
+                        setTimeout(() => messagesElement.classList.remove('updating'), 600);
+                    }
+
+                    // Update digests count
+                    const digestsElement = document.querySelector('[data-stat="digests-24h"]');
+                    if (digestsElement) {
+                        digestsElement.classList.add('updating');
+                        digestsElement.textContent = digests.last_24h || 0;
+                        setTimeout(() => digestsElement.classList.remove('updating'), 600);
+                    }
+
+                    // Update resource savings connections count
+                    const resourceSavingsElement = document.querySelector('[data-stat="resource-savings-connections"]');
+                    if (resourceSavingsElement) {
+                        const resourceSavings = metrics.resource_savings || {};
+                        resourceSavingsElement.classList.add('updating');
+                        resourceSavingsElement.textContent = resourceSavings.total_whatsapp_connections_saved || 0;
+                        setTimeout(() => resourceSavingsElement.classList.remove('updating'), 600);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating dashboard stats:', error);
+                });
+        }
+
+        // Function to update current time
+        function updateCurrentTime() {
+            const timeElement = document.getElementById('currentTime');
+            if (timeElement) {
+                const now = new Date();
+                const timeString = now.toLocaleString('ru-RU', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    timeZoneName: 'short'
+                });
+                timeElement.textContent = timeString;
+            }
+        }
+
+        // Update time immediately and then every second
+        updateCurrentTime();
+        setInterval(updateCurrentTime, 1000);
+
+        // Load cleanup data when modal opens
+        const cleanupModal = document.getElementById('cleanupModal');
+        cleanupModal.addEventListener('show.bs.modal', function () {
+            loadCleanupStats();
+        });
+
+        // Function to load cleanup statistics
+        function loadCleanupStats() {
+            fetch('/admin/storage/stats')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Storage stats response:', data); // Debug log
+                    const content = document.getElementById('cleanupContent');
+
+                    if (data.status === 'success') {
+                        const stats = data.storage_stats;
+                        let html = `
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        <strong>Статистика хранения данных</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="card border-primary">
+                                        <div class="card-body text-center">
+                                            <h5 class="card-title text-primary">
+                                                <i class="fas fa-comments me-2"></i>Сообщения
+                                            </h5>
+                                            <h3 class="text-primary">${stats.total_messages || 0}</h3>
+                                            <p class="text-muted">Всего сообщений</p>
+                                            <small class="text-muted">
+                                                Старых (>7д): ${stats.old_messages_7_days || 0}
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="card border-success">
+                                        <div class="card-body text-center">
+                                            <h5 class="card-title text-success">
+                                                <i class="fas fa-file-alt me-2"></i>Дайджесты
+                                            </h5>
+                                            <h3 class="text-success">${stats.total_digests || 0}</h3>
+                                            <p class="text-muted">Всего дайджестов</p>
+                                            <small class="text-muted">
+                                                Старых (>30д): ${stats.old_digests_30_days || 0}
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="card border-warning">
+                                        <div class="card-body text-center">
+                                            <h5 class="card-title text-warning">
+                                                <i class="fas fa-list-alt me-2"></i>Логи
+                                            </h5>
+                                            <h3 class="text-warning">${stats.total_system_logs || 0}</h3>
+                                            <p class="text-muted">Всего логов</p>
+                                            <small class="text-muted">
+                                                Всего системных логов
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <div class="alert alert-warning">
+                                        <i class="fas fa-exclamation-triangle me-2"></i>
+                                        <strong>Внимание!</strong> Очистка удалит старые данные согласно настройкам хранения.
+                                        Это действие нельзя отменить.
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+
+                        content.innerHTML = html;
+                    } else {
+                        content.innerHTML = `
+                            <div class="alert alert-danger">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                Ошибка загрузки статистики: ${data.message}
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    const content = document.getElementById('cleanupContent');
+                    content.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Ошибка загрузки данных: ${error.message}
+                        </div>
+                    `;
+                });
+        }
+
+        // Function to run cleanup
+        async function runCleanup() {
+            const button = event.target;
+            const originalText = button.innerHTML;
+
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Очистка...';
+
+            try {
+                const response = await fetch('/admin/storage/cleanup', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    const cleanup_results = result.cleanup_results;
+                    const messages_deleted = cleanup_results.messages.messages_deleted || 0;
+                    const digests_deleted = cleanup_results.digests.digests_deleted || 0;
+                    const logs_deleted = cleanup_results.system_logs.logs_deleted || 0;
+
+                    // Show success message
+                    const content = document.getElementById('cleanupContent');
+                    content.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>Очистка завершена успешно!</strong>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="card border-success">
+                                    <div class="card-body text-center">
+                                        <h5 class="text-success">${messages_deleted}</h5>
+                                        <p class="text-muted">Сообщений удалено</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border-success">
+                                    <div class="card-body text-center">
+                                        <h5 class="text-success">${digests_deleted}</h5>
+                                        <p class="text-muted">Дайджестов удалено</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border-success">
+                                    <div class="card-body text-center">
+                                        <h5 class="text-success">${logs_deleted}</h5>
+                                        <p class="text-muted">Логов удалено</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    // Disable the cleanup button after successful cleanup
+                    button.style.display = 'none';
+                } else {
+                    const content = document.getElementById('cleanupContent');
+                    content.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Ошибка очистки: ${result.message}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                const content = document.getElementById('cleanupContent');
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Ошибка выполнения очистки: ${error.message}
+                    </div>
+                `;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            }
+        }
+    </script>
+</body>
+</html>
