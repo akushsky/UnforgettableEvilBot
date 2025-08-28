@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     procps \
     curl \
+    libpq-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome for Puppeteer (AMD64 optimized)
@@ -63,6 +65,10 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 # Copy startup script
 COPY --chown=appuser:appuser docker/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
+
+# Copy debug script
+COPY --chown=appuser:appuser debug_db.py /app/debug_db.py
+RUN chmod +x /app/debug_db.py
 
 # Expose ports
 EXPOSE 9876

@@ -24,9 +24,13 @@ class Settings:
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
         # Database
-        self.DATABASE_URL = os.getenv(
+        database_url = os.getenv(
             "DATABASE_URL", "postgresql://user:password@localhost:5432/whatsapp_digest"
         )
+        # Fix old postgres:// format to postgresql://
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        self.DATABASE_URL = database_url
 
         # OpenAI
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
