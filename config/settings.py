@@ -51,7 +51,8 @@ class Settings:
 
         # CORS
         self.CORS_ORIGINS = os.getenv(
-            "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+            "CORS_ORIGINS",
+            "http://localhost:3000,http://localhost:9090,http://localhost:9876",
         ).split(",")
 
         # Redis for caching
@@ -99,6 +100,9 @@ class Settings:
 
         # Admin settings
         self.ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+
+        # Server settings
+        self.PORT = int(os.getenv("PORT", "9876"))
 
         # Flag for deferred validation
         self._validated = False

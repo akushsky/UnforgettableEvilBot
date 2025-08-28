@@ -136,7 +136,7 @@ class LocalDevelopmentServer:
         import socket
 
         # Ports that should be free (application ports)
-        ports_to_check = {3000: "WhatsApp Bridge", 8000: "FastAPI"}
+        ports_to_check = {3000: "WhatsApp Bridge", settings.PORT: "FastAPI"}
 
         unavailable_ports = []
 
@@ -370,7 +370,7 @@ class LocalDevelopmentServer:
         """Start FastAPI application"""
         self.log("🐍 Starting FastAPI application...")
         process = self.run_command(
-            "uvicorn main:app --host 127.0.0.1 --port 8000 --reload",
+            f"uvicorn main:app --host 127.0.0.1 --port {settings.PORT} --reload",
             "api",
             "logs/api.log",
         )
@@ -378,7 +378,7 @@ class LocalDevelopmentServer:
         if process:
             self.log("⏳ Waiting for FastAPI to be ready...")
             # Use /health as readiness probe
-            if self.check_health("http://localhost:8000/health"):
+            if self.check_health(f"http://localhost:{settings.PORT}/health"):
                 self.log("✅ FastAPI is ready!")
                 return True
             else:
@@ -478,9 +478,9 @@ class LocalDevelopmentServer:
 
         # Show status
         self.log("🎉 All services are running!")
-        self.log("📊 FastAPI: http://localhost:8000")
+        self.log(f"📊 FastAPI: http://localhost:{settings.PORT}")
         self.log(f"🌉 Bridge: {settings.WHATSAPP_BRIDGE_URL}")
-        self.log("📋 Admin Panel: http://localhost:8000/admin")
+        self.log(f"📋 Admin Panel: http://localhost:{settings.PORT}/admin")
         self.log("")
         self.log("📝 Logs:")
         self.log("   API: logs/api.log")
@@ -543,7 +543,7 @@ This script will:
 - Run migrations
 - Install Node.js dependencies
 - Start WhatsApp Bridge on port 3000
-- Start FastAPI on port 8000
+        - Start FastAPI on port {settings.PORT}
 - Monitor and restart failed services
         """
         )

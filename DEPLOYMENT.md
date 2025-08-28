@@ -158,7 +158,7 @@ python setup_database.py
 python start_local.py
 
 # Or directly via uvicorn
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 9876 --reload
 ```
 
 ### 6. Setting Up WhatsApp Bridge
@@ -177,7 +177,7 @@ node persistent_bridge.js
 # Simple run
 docker run -d \
   --name whatsapp-digest \
-  -p 8000:8000 \
+  -p 9876:9876 \
   -e DATABASE_URL=postgresql://user:pass@host/db \
   -e OPENAI_API_KEY=your-key \
   whatsapp-digest:latest
@@ -203,7 +203,7 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "9876:9876"
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/whatsapp_digest
       - REDIS_URL=redis://redis:6379/0
@@ -273,7 +273,7 @@ User=whatsapp-digest
 Group=whatsapp-digest
 WorkingDirectory=/opt/whatsapp-digest
 Environment=PATH=/opt/whatsapp-digest/.venv/bin
-ExecStart=/opt/whatsapp-digest/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+ExecStart=/opt/whatsapp-digest/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 9876 --workers 4
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 TimeoutStopSec=5
@@ -316,7 +316,7 @@ server {
 
     # Main application
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:9876;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -335,7 +335,7 @@ server {
 
     # Monitoring dashboard
     location /monitoring/dashboard {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:9876;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -347,7 +347,7 @@ server {
         allow 127.0.0.1;
         allow 10.0.0.0/8;
         deny all;
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:9876;
     }
 }
 ```
@@ -418,7 +418,7 @@ scrape_configs:
 
   - job_name: 'whatsapp-digest-app'
     static_configs:
-      - targets: ['localhost:8000']
+      - targets: ['localhost:9876']
     scrape_interval: 15s
     metrics_path: /metrics
 ```
@@ -449,7 +449,7 @@ Create `/etc/logrotate.d/whatsapp-digest`:
 # Check via: GET /monitoring/alerts
 
 # Manual health check:
-curl -X POST http://localhost:8000/monitoring/health-check
+curl -X POST http://localhost:9876/monitoring/health-check
 ```
 
 ---
@@ -538,13 +538,13 @@ sudo systemctl status whatsapp-digest
 sudo journalctl -u whatsapp-digest -f
 
 # API check
-curl http://localhost:8000/health
+curl http://localhost:9876/health
 
 # Metrics
-curl http://localhost:8000/metrics
+curl http://localhost:9876/metrics
 
 # Monitoring dashboard
-curl http://localhost:8000/monitoring/dashboard
+curl http://localhost:9876/monitoring/dashboard
 ```
 
 #### Common Issues:

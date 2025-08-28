@@ -60,7 +60,7 @@ ls docker-compose.coolify.yml
 3. **Configure Build Settings**
    - **Dockerfile Path**: `Dockerfile`
    - **Docker Compose**: Use `docker-compose.coolify.yml`
-   - **Port**: `8000` (FastAPI)
+   - **Port**: `9876` (FastAPI)
 
 ### 3. **Environment Variables**
 
@@ -140,7 +140,7 @@ The system is configured with reasonable limits:
 - **Retries**: 3 attempts
 
 ### **Ports**
-- **8000**: FastAPI application
+- **9876**: FastAPI application
 - **3000**: WhatsApp Bridge (internal only)
 
 ## 📊 Monitoring

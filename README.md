@@ -63,9 +63,9 @@ A sophisticated WhatsApp chat monitoring system that uses AI to analyze messages
    docker-compose up -d
    ```
 4. **Access the application**
-   - **API**: http://localhost:8000
-   - **Admin Panel**: http://localhost:8000/admin/login
-   - **API Documentation**: http://localhost:8000/docs
+   - **API**: http://localhost:9876
+- **Admin Panel**: http://localhost:9876/admin/login
+- **API Documentation**: http://localhost:9876/docs
 ### Option 2: Local Development
 1. **Install Python dependencies**
    ```bash
@@ -94,7 +94,7 @@ A sophisticated WhatsApp chat monitoring system that uses AI to analyze messages
 5. **Start the application**
    ```bash
    # Terminal 1: Start Python backend
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   uvicorn main:app --reload --host 0.0.0.0 --port 9876
    # Terminal 2: Start WhatsApp bridge
    cd whatsapp_bridge
    node persistent_bridge.js
@@ -160,7 +160,7 @@ WHATSAPP_SESSION_PATH=./whatsapp_sessions
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   WhatsApp      │───▶│   Node.js       │───▶│   Python        │
 │   Web           │    │   Bridge        │    │   FastAPI       │
-│   (Puppeteer)   │    │   (Port 3000)   │    │   (Port 8000)   │
+│   (Puppeteer)   │    │   (Port 3000)   │    │   (Port 9876)   │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                               │                        │
                               ▼                        ▼

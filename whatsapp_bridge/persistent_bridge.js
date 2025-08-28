@@ -23,7 +23,7 @@ class PersistentWhatsAppBridge {
     this.restoreScheduled = false;
 
     this.app = express();
-    this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000';
+    this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:9876';
 
     this.stateFile = './client_states.json';
     this.sessionsRoot = path.resolve('./sessions');

@@ -328,7 +328,7 @@ class MetricsCollector:
             ),
         }
 
-    def start_metrics_server(self, port: int = 8000):
+    def start_metrics_server(self, port: int = 9090):
         """Start HTTP server for metrics"""
         try:
             start_http_server(port, registry=self.registry)

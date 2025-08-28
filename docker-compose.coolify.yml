@@ -9,7 +9,7 @@ services:
     container_name: whatsapp-digest-app
     restart: unless-stopped
     ports:
-      - "8000:8000"  # FastAPI
+      - "9876:9876"  # FastAPI
       # WhatsApp Bridge runs internally on port 3000, no external exposure needed
     environment:
       # Database - Coolify will provide these
@@ -23,7 +23,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
       # Application settings
-      - PYTHON_BACKEND_URL=http://localhost:8000
+      - PYTHON_BACKEND_URL=http://localhost:9876
       - DEBUG=false
       - LOG_LEVEL=INFO
 
@@ -62,7 +62,7 @@ services:
       - app-data:/app/data
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9876/health"]
       interval: 30s
       timeout: 10s
       retries: 3
