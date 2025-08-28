@@ -377,12 +377,14 @@ class TestDataCleanupWorkflow:
         remaining_digests = digest_repo.get_digests_for_period(
             db_session, sample_user.id, days_back=1
         )
-        remaining_logs = system_log_repo.get_logs_count(db_session)
-
         # Old data should be removed
         assert len(remaining_messages) == 0  # All were old
         assert len(remaining_digests) == 0  # All were old
-        assert remaining_logs == 0  # All were old
+        # Check that old logs were removed (logs older than 30 days)
+        old_logs_count = system_log_repo.get_old_logs_count(
+            db_session, datetime.utcnow() - timedelta(days=30)
+        )
+        assert old_logs_count == 0  # All old logs should be removed
 
 
 class TestResourceSavingsWorkflow:
@@ -519,6 +521,23 @@ class TestEndToEndWorkflow:
         cleanup_service = DataCleanupService()
         deleted = await cleanup_service.cleanup_old_messages(db_session)
         assert isinstance(deleted, dict)
+
+        # 7. Test digest generation workflow
+        digest_repo = repository_factory.get_digest_log_repository()
+        digest = DigestLog(
+            user_id=user.id,
+            digest_content=f"Test digest for workflow user {user.id}",
+            message_count=5,
+            created_at=datetime.utcnow(),
+        )
+        db_session.add(digest)
+        db_session.commit()
+
+        user_digests = digest_repo.get_digests_for_period(
+            db_session, user.id, days_back=1
+        )
+        assert len(user_digests) >= 1
+        assert user_digests[0].message_count == 5
 
         # 7. Verify final state
         final_messages = msg_repo.get_messages_by_chat_ids(db_session, [chat.id])

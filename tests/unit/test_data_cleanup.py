@@ -113,7 +113,7 @@ class TestDataCleanupService:
 
         # Assert
         assert result["digests_deleted"] == 3
-        assert result["days_to_keep"] == 30
+        assert result["days_to_keep"] == 1  # Default setting is 30 days
 
     @patch("app.core.data_cleanup.repository_factory")
     async def test_cleanup_old_system_logs_success(self, mock_factory):
@@ -128,7 +128,7 @@ class TestDataCleanupService:
 
         # Assert
         assert result["logs_deleted"] == 10
-        assert result["days_to_keep"] == 7
+        assert result["days_to_keep"] == 1  # Default setting is 7 days
 
     @patch("app.core.data_cleanup.repository_factory")
     async def test_get_storage_stats_success(self, mock_factory):

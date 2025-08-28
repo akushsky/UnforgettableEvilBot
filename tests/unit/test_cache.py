@@ -45,7 +45,7 @@ class TestCacheManager:
 
         assert key1 == key2  # Same arguments should generate same key
         assert key1 != key3  # Different arguments should generate different key
-        assert len(key1) == 32  # MD5 hash length
+        assert len(key1) == 64  # SHA-256 hash length
 
     @patch.object(CacheManager, "_record_cache_operation")
     def test_get_from_memory_cache_success(self, mock_record):

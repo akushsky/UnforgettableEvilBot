@@ -51,8 +51,16 @@ class HealthChecker:
             cb_state = openai_service.circuit_breaker.state.value
             failure_count = openai_service.circuit_breaker.failure_count
 
+            # Return degraded status for open circuit breaker
+            if cb_state == "open":
+                status = "degraded"
+            elif cb_state == "half_open":
+                status = "degraded"
+            else:
+                status = "healthy"
+
             return {
-                "status": "healthy" if cb_state == "closed" else "degraded",
+                "status": status,
                 "circuit_breaker_state": cb_state,
                 "failure_count": failure_count,
                 "error": None,
@@ -84,7 +92,9 @@ class HealthChecker:
             import httpx
 
             async with httpx.AsyncClient() as client:
-                response = await client.get("http://localhost:3000/health", timeout=5.0)
+                response = await client.get(
+                    f"{settings.WHATSAPP_BRIDGE_URL}/health", timeout=5.0
+                )
                 if response.status_code == 200:
                     data = response.json()
                     return {
@@ -113,10 +123,11 @@ class HealthChecker:
             hour_usage = stats["requests_last_hour"] / stats["hour_limit"]
 
             status = "healthy"
-            if minute_usage > 0.8 or hour_usage > 0.8:
+            # Treat exactly 1.0 as warning; consider >1.0 unhealthy
+            if minute_usage > 1.0 or hour_usage > 1.0:
+                status = "unhealthy"
+            elif minute_usage > 0.8 or hour_usage > 0.8:
                 status = "warning"
-            elif minute_usage >= 1.0 or hour_usage >= 1.0:
-                status = "degraded"
 
             return {"status": status, "stats": stats, "error": None}
         except Exception as e:
@@ -141,11 +152,16 @@ class HealthChecker:
         degraded_count = sum(
             1 for check in checks.values() if check["status"] == "degraded"
         )
+        warning_count = sum(
+            1 for check in checks.values() if check["status"] == "warning"
+        )
 
         if unhealthy_count > 0:
             overall_status = "unhealthy"
         elif degraded_count > 0:
             overall_status = "degraded"
+        elif warning_count > 0:
+            overall_status = "warning"
         else:
             overall_status = "healthy"
 
@@ -158,6 +174,7 @@ class HealthChecker:
                     1 for check in checks.values() if check["status"] == "healthy"
                 ),
                 "degraded": degraded_count,
+                "warning": warning_count,
                 "unhealthy": unhealthy_count,
                 "not_configured": sum(
                     1

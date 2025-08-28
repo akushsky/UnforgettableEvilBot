@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -466,7 +467,7 @@ class TestServiceWorkflowIntegration:
             # Create a test message
             message = WhatsAppMessage(
                 chat_id=sample_chat.id,
-                message_id="workflow_test_msg",
+                message_id=str(uuid.uuid4()),
                 sender="test_sender",
                 content="This is an important test message for workflow testing",
                 timestamp=datetime.utcnow(),

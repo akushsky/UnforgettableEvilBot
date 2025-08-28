@@ -20,6 +20,8 @@ from pathlib import Path
 
 import psutil
 
+from config.settings import settings
+
 
 class LocalDevelopmentServer:
     def __init__(self):
@@ -184,7 +186,7 @@ class LocalDevelopmentServer:
             self.log("✅ Required application ports are available")
             return True
 
-    def run_command(self, command, name, log_file=None):
+    def run_command(self, command, name, log_file=None, cwd=None):
         """Run a command and track the process"""
         try:
             # Split command into list for security
@@ -201,11 +203,13 @@ class LocalDevelopmentServer:
                         cmd_list,
                         stdout=f,
                         stderr=f,
+                        cwd=cwd,
                         preexec_fn=os.setsid if os.name != "nt" else None,
                     )
             else:
                 process = subprocess.Popen(
                     cmd_list,
+                    cwd=cwd,
                     preexec_fn=os.setsid if os.name != "nt" else None,
                 )
             self.processes[name] = process
@@ -346,14 +350,15 @@ class LocalDevelopmentServer:
         """Start WhatsApp bridge"""
         self.log("🌉 Starting WhatsApp Bridge...")
         process = self.run_command(
-            "cd whatsapp_bridge && node persistent_bridge.js",
+            ["node", "persistent_bridge.js"],
             "bridge",
             "logs/bridge.log",
+            cwd=str(Path("whatsapp_bridge")),
         )
 
         if process:
             self.log("⏳ Waiting for WhatsApp Bridge to be ready...")
-            if self.check_health("http://localhost:3000/health"):
+            if self.check_health(f"{settings.WHATSAPP_BRIDGE_URL}/health"):
                 self.log("✅ WhatsApp Bridge is ready!")
                 return True
             else:
@@ -372,11 +377,14 @@ class LocalDevelopmentServer:
 
         if process:
             self.log("⏳ Waiting for FastAPI to be ready...")
+            # Use /health as readiness probe
             if self.check_health("http://localhost:8000/health"):
                 self.log("✅ FastAPI is ready!")
                 return True
             else:
-                self.log("❌ FastAPI failed to start. Check logs/api.log")
+                self.log(
+                    "❌ FastAPI failed to become ready (health). Check logs/api.log"
+                )
                 return False
         return False
 
@@ -387,7 +395,9 @@ class LocalDevelopmentServer:
 
             # Use httpx instead of urllib for better security
             with httpx.Client(timeout=10.0) as client:
-                response = client.post("http://localhost:3000/restore-all", data=b"")
+                response = client.post(
+                    f"{settings.WHATSAPP_BRIDGE_URL}/restore-all", data=b""
+                )
                 if response.status_code == 200:
                     self.log("🔄 Auto-reconnection initiated")
                 else:
@@ -469,7 +479,7 @@ class LocalDevelopmentServer:
         # Show status
         self.log("🎉 All services are running!")
         self.log("📊 FastAPI: http://localhost:8000")
-        self.log("🌉 Bridge: http://localhost:3000")
+        self.log(f"🌉 Bridge: {settings.WHATSAPP_BRIDGE_URL}")
         self.log("📋 Admin Panel: http://localhost:8000/admin")
         self.log("")
         self.log("📝 Logs:")

@@ -275,7 +275,7 @@ class DigestScheduler:
 
             # Send to Telegram
             success = await self.telegram_service.send_digest(
-                user.telegram_channel_id, digest_content
+                str(user.telegram_channel_id), digest_content
             )
 
             # Save the digest log

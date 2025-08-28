@@ -32,7 +32,7 @@ class DataCleanupService:
                 user_setting = get_user_settings(user.id, db)
                 try:
                     # Get maximum message age for the user
-                    max_age_hours = user_setting.max_message_age_hours
+                    max_age_hours = int(user_setting.max_message_age_hours)
                     cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)
 
                     # Find all user chats

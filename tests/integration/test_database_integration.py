@@ -207,7 +207,7 @@ class TestDatabaseIntegration:
         """Test optimized message repository with real database operations."""
         optimized_repo = OptimizedWhatsAppMessageRepository()
 
-        # Create messages
+        # Create messages for the sample chat
         messages = []
         for i in range(5):
             message = WhatsAppMessage(
@@ -224,6 +224,10 @@ class TestDatabaseIntegration:
 
         db_session.add_all(messages)
         db_session.commit()
+
+        # Refresh all messages to ensure they have IDs
+        for message in messages:
+            db_session.refresh(message)
 
         # Test optimized repository methods
         unprocessed_messages = optimized_repo.get_unprocessed_messages(

@@ -306,7 +306,7 @@ class MetricsCollector:
         if "cpu_usage" in metrics:
             self.cpu_usage_percent.set(metrics["cpu_usage"])
 
-    def get_metrics(self) -> str:
+    def get_metrics(self) -> bytes:
         """Get metrics in Prometheus format"""
         return generate_latest(self.registry)
 

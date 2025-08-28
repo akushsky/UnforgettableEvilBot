@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from typing import List, TypedDict
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
@@ -11,16 +12,20 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-# Create engine with optimized settings
+# Create engine with PostgreSQL settings
+_db_url = make_url(settings.DATABASE_URL)
+
+_connect_args = {"connect_timeout": 10, "application_name": "WhatsAppDigestBot"}
+
 engine = create_engine(
     settings.DATABASE_URL,
     poolclass=QueuePool,
-    pool_size=settings.DB_POOL_SIZE,  # Connection pool size
-    max_overflow=settings.DB_MAX_OVERFLOW,  # Maximum count of additional connections
-    pool_pre_ping=True,  # Check connections before use
-    pool_recycle=3600,  # Recreate connections every hour
-    echo=False,  # Disable SQL logging in production
-    connect_args={"connect_timeout": 10, "application_name": "WhatsAppDigestBot"},
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False,
+    connect_args=_connect_args,
 )
 
 # Create session factory
@@ -71,18 +76,6 @@ def after_cursor_execute(conn, cursor, statement, parameters, context, executema
     if total > 1.0:
         _db_stats["slow_queries"] = _db_stats["slow_queries"] + 1
         logger.warning(f"Slow query detected: {total:.3f}s - {statement[:100]}...")
-
-
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    """Optimization for SQLite"""
-    if "sqlite" in settings.DATABASE_URL:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA cache_size=10000")
-        cursor.execute("PRAGMA temp_store=MEMORY")
-        cursor.close()
 
 
 def get_db():
@@ -156,36 +149,28 @@ def reset_db_stats():
 
 
 def optimize_database():
-    """Database optimization"""
+    """Database optimization for PostgreSQL"""
     try:
         with get_db_session() as db:
             # Analyze tables for PostgreSQL
-            if "postgresql" in settings.DATABASE_URL:
-                db.execute(text("ANALYZE"))
-                logger.info("Database analysis completed")
-
-            # optimization for SQLite
-            elif "sqlite" in settings.DATABASE_URL:
-                db.execute(text("VACUUM"))
-                db.execute(text("ANALYZE"))
-                logger.info("SQLite optimization completed")
+            db.execute(text("ANALYZE"))
+            logger.info("Database analysis completed")
 
             # Get information about database size
-            if "postgresql" in settings.DATABASE_URL:
-                result = db.execute(
-                    text(
-                        """
-                    SELECT
-                        pg_size_pretty(pg_database_size(current_database())) as db_size,
-                        pg_size_pretty(pg_total_relation_size('users')) as users_size,
-                        pg_size_pretty(pg_total_relation_size('whatsapp_messages')) as messages_size
-                """
-                    )
-                ).fetchone()
+            result = db.execute(
+                text(
+                    """
+                SELECT
+                    pg_size_pretty(pg_database_size(current_database())) as db_size,
+                    pg_size_pretty(pg_total_relation_size('users')) as users_size,
+                    pg_size_pretty(pg_total_relation_size('whatsapp_messages')) as messages_size
+            """
+                )
+            ).fetchone()
 
-                logger.info(f"Database size: {result[0]}")
-                logger.info(f"Users table size: {result[1]}")
-                logger.info(f"Messages table size: {result[2]}")
+            logger.info(f"Database size: {result[0]}")
+            logger.info(f"Users table size: {result[1]}")
+            logger.info(f"Messages table size: {result[2]}")
 
     except Exception as e:
         logger.error(f"Database optimization failed: {e}")

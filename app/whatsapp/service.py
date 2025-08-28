@@ -14,14 +14,15 @@ logger = logging.getLogger(__name__)
 class WhatsAppService:
     """WhatsAppService class."""
 
-    def __init__(self, session_path: str):
+    def __init__(self, session_path: str, bridge_url: str = "http://localhost:3000"):
         """Initialize the class.
 
         Args:
             session_path: Description of session_path.
+            bridge_url: URL of the WhatsApp bridge service.
         """
         self.session_path = session_path
-        self.bridge_url = "http://localhost:3000"
+        self.bridge_url = bridge_url
         self.bridge_process: Optional[subprocess.Popen] = None
         self.is_connected = False
         self.http_client = httpx.AsyncClient()

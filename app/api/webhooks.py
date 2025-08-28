@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.repository_factory import repository_factory
 from app.database.connection import SessionLocal
@@ -19,17 +19,16 @@ class WhatsAppMessageWebhook(BaseModel):
     id: str
     body: str
     timestamp: str
-    from_: Optional[str] = None
+    from_: Optional[str] = Field(
+        default=None,
+        validation_alias="from",
+        serialization_alias="from",
+    )
     fromMe: bool
     author: Optional[str] = None
     type: str
     hasMedia: bool
     chatId: str
-
-    class Config:
-        """Config class."""
-
-        fields = {"from_": "from"}
 
     """QRGeneratedWebhook class."""
 
@@ -103,7 +102,7 @@ async def receive_whatsapp_message(message_data: WhatsAppMessageWebhook):
         # Check whether we've already processed this message
         existing_message = (
             repository_factory.get_whatsapp_message_repository().get_by_message_id(
-                db, message_data.messageId
+                db, message_data.id
             )
         )
 
@@ -111,7 +110,7 @@ async def receive_whatsapp_message(message_data: WhatsAppMessageWebhook):
             return {"message": "Message already processed"}
 
         # Analyze message importance via OpenAI
-        content_text = message_data.content or ""
+        content_text = message_data.body or ""
         openai_service = OpenAIService()
         importance_score = await openai_service.analyze_message_importance(
             content_text, monitored_chat.chat_name
@@ -120,8 +119,8 @@ async def receive_whatsapp_message(message_data: WhatsAppMessageWebhook):
         # Save the message to the database
         db_message = WhatsAppMessage(
             chat_id=monitored_chat.id,
-            message_id=message_data.messageId,
-            sender=message_data.sender or "Unknown",
+            message_id=message_data.id,
+            sender=message_data.from_ or "Unknown",
             content=content_text,
             timestamp=datetime.fromisoformat(
                 message_data.timestamp.replace("Z", "+00:00")

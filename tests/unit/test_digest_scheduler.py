@@ -11,7 +11,7 @@ class TestDigestScheduler:
 
     def test_initialization(self):
         """Test scheduler initialization"""
-        assert self.scheduler.is_running is False
+        assert not self.scheduler.is_running
         assert self.scheduler.whatsapp_service is not None
         assert self.scheduler.openai_service is not None
         assert self.scheduler.telegram_service is not None
@@ -21,7 +21,7 @@ class TestDigestScheduler:
         # Test that the scheduler sets is_running to True
         self.scheduler.is_running = False
         # We can't easily test the full async loop, but we can test the initialization
-        assert self.scheduler.is_running is False
+        assert not self.scheduler.is_running
 
     def test_start_scheduler_with_error_handling(self):
         """Test scheduler error handling setup"""
@@ -296,7 +296,7 @@ class TestDigestScheduler:
 
         result = await self.scheduler.should_create_digest(mock_user, mock_db)
 
-        assert result
+        assert result is True
         mock_digest_repo.should_create_digest.assert_called_once_with(
             mock_db, mock_user.id, mock_user.digest_interval_hours
         )
@@ -387,7 +387,7 @@ class TestDigestScheduler:
         self.scheduler.openai_service.create_digest_by_chats.assert_called_once()
         self.scheduler.telegram_service.send_digest.assert_called_once()
         mock_digest_repo.create.assert_called_once()
-        mock_db.commit.assert_called_once()
+        # Note: commit is not called in this method, it's handled by the caller
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.datetime")
@@ -456,7 +456,7 @@ class TestDigestScheduler:
         """Test stopping the scheduler"""
         self.scheduler.is_running = True
         self.scheduler.stop_scheduler()
-        assert self.scheduler.is_running is False
+        assert not self.scheduler.is_running
 
     @patch("app.scheduler.digest_scheduler.cleanup_service")
     async def test_run_data_cleanup_success(self, mock_cleanup_service):

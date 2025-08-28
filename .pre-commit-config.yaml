@@ -91,10 +91,10 @@ repos:
       - id: pytest
         name: pytest
         entry: ./scripts/run_tests.sh
+        args: [all]
         language: system
         pass_filenames: false
         always_run: true
-        stages: [manual]
         description: Run all tests to ensure they pass before commit
         verbose: true
 

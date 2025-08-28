@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script for creating a database from scratch, bypassing SQLite migration issues
+Script for creating a PostgreSQL database from scratch with current structure
 """
 
 import os

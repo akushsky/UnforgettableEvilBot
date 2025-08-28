@@ -178,23 +178,6 @@ class TestDatabaseConnection:
 
     @patch("app.database.connection.settings")
     @patch("app.database.connection.get_db_session")
-    def test_optimize_database_sqlite(self, mock_get_session, mock_settings):
-        """Test database optimization for SQLite"""
-        mock_settings.DATABASE_URL = "sqlite:///test.db"
-
-        mock_session = Mock()
-        mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_session)
-        mock_context.__exit__ = Mock(return_value=None)
-        mock_get_session.return_value = mock_context
-
-        optimize_database()
-
-        # Should call VACUUM and ANALYZE for SQLite
-        assert mock_session.execute.call_count == 2
-
-    @patch("app.database.connection.settings")
-    @patch("app.database.connection.get_db_session")
     def test_optimize_database_postgresql_with_size_info(
         self, mock_get_session, mock_settings
     ):
@@ -364,46 +347,6 @@ class TestDatabaseConnection:
         assert stats["total_queries"] == 1
         assert stats["slow_queries"] == 1
         assert len(stats["query_times"]) == 1
-
-    @patch("app.database.connection.settings")
-    def test_sqlite_pragma_optimization(self, mock_settings):
-        """Test SQLite PRAGMA optimization"""
-        from app.database.connection import set_sqlite_pragma
-
-        mock_settings.DATABASE_URL = "sqlite:///test.db"
-
-        mock_dbapi_connection = Mock()
-        mock_cursor = Mock()
-        mock_dbapi_connection.cursor.return_value = mock_cursor
-
-        set_sqlite_pragma(mock_dbapi_connection, None)
-
-        # Should execute PRAGMA commands
-        expected_calls = [
-            (("PRAGMA journal_mode=WAL",),),
-            (("PRAGMA synchronous=NORMAL",),),
-            (("PRAGMA cache_size=10000",),),
-            (("PRAGMA temp_store=MEMORY",),),
-        ]
-        assert mock_cursor.execute.call_args_list == expected_calls
-        mock_cursor.close.assert_called_once()
-
-    @patch("app.database.connection.settings")
-    def test_sqlite_pragma_non_sqlite(self, mock_settings):
-        """Test SQLite PRAGMA optimization for non-SQLite database"""
-        from app.database.connection import set_sqlite_pragma
-
-        mock_settings.DATABASE_URL = "postgresql://localhost/test"
-
-        mock_dbapi_connection = Mock()
-        mock_cursor = Mock()
-        mock_dbapi_connection.cursor.return_value = mock_cursor
-
-        set_sqlite_pragma(mock_dbapi_connection, None)
-
-        # Should not execute any PRAGMA commands for non-SQLite
-        mock_cursor.execute.assert_not_called()
-        mock_cursor.close.assert_not_called()
 
     def test_connection_error_tracking(self):
         """Test connection error tracking"""

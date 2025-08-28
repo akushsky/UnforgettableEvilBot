@@ -1,12 +1,15 @@
 import asyncio
+import uuid
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Generator
 
 import pytest
-from sqlalchemy import create_engine
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.database.connection import get_db
 from app.models.database import (
     Base,
     DigestLog,
@@ -18,6 +21,7 @@ from app.models.database import (
     WhatsAppMessage,
 )
 from config.settings import settings
+from main import app
 
 
 @pytest.fixture(scope="session")
@@ -30,13 +34,14 @@ def event_loop():
 
 @pytest.fixture(scope="session")
 def test_engine():
-    """Create a test database engine using SQLite in-memory database."""
+    """Create a test database engine using PostgreSQL."""
     engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
+        settings.DATABASE_URL,
         poolclass=StaticPool,
         echo=False,
     )
+    # Create all tables immediately
+    Base.metadata.create_all(bind=engine)
     return engine
 
 
@@ -60,7 +65,39 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
     try:
         yield session
     finally:
-        session.close()
+        # Clean up all data after each test - more thorough cleanup
+        try:
+            # Disable foreign key checks temporarily for cleanup
+            session.execute(text("SET session_replication_role = replica;"))
+
+            # Delete all data in reverse dependency order
+            session.query(OpenAIMetrics).delete()
+            session.query(ResourceSavings).delete()
+            session.query(SystemLog).delete()
+            session.query(DigestLog).delete()
+            session.query(WhatsAppMessage).delete()
+            session.query(MonitoredChat).delete()
+            session.query(User).delete()
+
+            # Re-enable foreign key checks
+            session.execute(text("SET session_replication_role = DEFAULT;"))
+            session.commit()
+        except Exception:
+            session.rollback()
+            # Fallback cleanup if the above fails
+            try:
+                session.query(OpenAIMetrics).delete()
+                session.query(ResourceSavings).delete()
+                session.query(SystemLog).delete()
+                session.query(DigestLog).delete()
+                session.query(WhatsAppMessage).delete()
+                session.query(MonitoredChat).delete()
+                session.query(User).delete()
+                session.commit()
+            except Exception:
+                session.rollback()
+        finally:
+            session.close()
 
 
 @pytest.fixture
@@ -70,15 +107,41 @@ async def async_db_session(db_session) -> AsyncGenerator[Session, None]:
 
 
 @pytest.fixture
-def sample_user(db_session) -> User:
-    """Create a sample user for testing."""
+def admin_user(db_session) -> User:
+    """Create an admin user for testing."""
+    # Generate unique admin user for each test
+    unique_id = str(uuid.uuid4())[:8]
     user = User(
-        username="testuser",
-        email="test@example.com",
+        username=f"admin_user_{unique_id}",
+        email=f"admin_{unique_id}@example.com",
         hashed_password="hashed_password_123",
+        digest_interval_hours=4,
+        whatsapp_auto_reconnect=True,
         is_active=True,
         whatsapp_connected=True,
-        telegram_channel_id="test_channel_123",
+        telegram_channel_id=f"admin_channel_{unique_id}",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def sample_user(db_session) -> User:
+    """Create a sample user for testing."""
+    # Generate unique username and email for each test
+    unique_id = str(uuid.uuid4())[:8]
+    user = User(
+        username=f"testuser_{unique_id}",
+        email=f"test_{unique_id}@example.com",
+        hashed_password="hashed_password_123",
+        digest_interval_hours=4,
+        whatsapp_auto_reconnect=True,
+        is_active=True,
+        whatsapp_connected=True,
+        telegram_channel_id=f"test_channel_{unique_id}",
         created_at=datetime.utcnow(),
     )
     db_session.add(user)
@@ -90,10 +153,11 @@ def sample_user(db_session) -> User:
 @pytest.fixture
 def sample_chat(db_session, sample_user) -> MonitoredChat:
     """Create a sample monitored chat for testing."""
+    unique_id = str(uuid.uuid4())[:8]
     chat = MonitoredChat(
         user_id=sample_user.id,
-        chat_name="Test Chat",
-        chat_id="test_chat_123",
+        chat_name=f"Test Chat {unique_id}",
+        chat_id=f"test_chat_{unique_id}",
         chat_type="group",  # Required field
         is_active=True,
         created_at=datetime.utcnow(),
@@ -107,11 +171,13 @@ def sample_chat(db_session, sample_user) -> MonitoredChat:
 @pytest.fixture
 def sample_messages(db_session, sample_chat) -> list[WhatsAppMessage]:
     """Create sample WhatsApp messages for testing."""
+    # Generate unique message IDs for each test
+    unique_id = str(uuid.uuid4())[:8]
     messages = []
     for i in range(5):
         message = WhatsAppMessage(
             chat_id=sample_chat.id,
-            message_id=f"msg_{i}",
+            message_id=f"msg_{unique_id}_{i}",
             sender="test_sender",
             content=f"Test message {i}",
             timestamp=datetime.utcnow() - timedelta(hours=i),
@@ -227,58 +293,9 @@ def sample_openai_metrics(db_session) -> list[OpenAIMetrics]:
 
 @pytest.fixture(autouse=True)
 def clean_database(db_session):
-    """Clean up database before and after each test."""
-    # Clean up before test
-    try:
-        db_session.query(OpenAIMetrics).delete()
-        db_session.query(ResourceSavings).delete()
-        db_session.query(SystemLog).delete()
-        db_session.query(DigestLog).delete()
-        db_session.query(WhatsAppMessage).delete()
-        db_session.query(MonitoredChat).delete()
-        db_session.query(User).delete()
-        db_session.commit()
-    except Exception:
-        db_session.rollback()
-        # Try again after rollback
-        try:
-            db_session.query(OpenAIMetrics).delete()
-            db_session.query(ResourceSavings).delete()
-            db_session.query(SystemLog).delete()
-            db_session.query(DigestLog).delete()
-            db_session.query(WhatsAppMessage).delete()
-            db_session.query(MonitoredChat).delete()
-            db_session.query(User).delete()
-            db_session.commit()
-        except Exception:
-            db_session.rollback()
-
+    """Clean up database after each test."""
     yield
-
-    # Clean up after test
-    try:
-        db_session.query(OpenAIMetrics).delete()
-        db_session.query(ResourceSavings).delete()
-        db_session.query(SystemLog).delete()
-        db_session.query(DigestLog).delete()
-        db_session.query(WhatsAppMessage).delete()
-        db_session.query(MonitoredChat).delete()
-        db_session.query(User).delete()
-        db_session.commit()
-    except Exception:
-        db_session.rollback()
-        # Try again after rollback
-        try:
-            db_session.query(OpenAIMetrics).delete()
-            db_session.query(ResourceSavings).delete()
-            db_session.query(SystemLog).delete()
-            db_session.query(DigestLog).delete()
-            db_session.query(WhatsAppMessage).delete()
-            db_session.query(MonitoredChat).delete()
-            db_session.query(User).delete()
-            db_session.commit()
-        except Exception:
-            db_session.rollback()
+    # Cleanup is now handled in the db_session fixture
 
 
 @pytest.fixture
@@ -290,3 +307,19 @@ def mock_settings():
     settings.TELEGRAM_BOT_TOKEN = "test-bot-token"
     settings.REDIS_URL = "redis://localhost:6379/1"
     return settings
+
+
+@pytest.fixture
+def client(db_session) -> TestClient:
+    """Create a test client with DB dependency override."""
+
+    def _override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = _override_get_db
+    client = TestClient(app)
+    yield client
+    app.dependency_overrides.clear()

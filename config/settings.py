@@ -4,7 +4,12 @@ import os
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # Prefer explicit TEST_ENV_FILE if set; otherwise load .env
+    test_env_file = os.getenv("TEST_ENV_FILE")
+    if test_env_file and os.path.exists(test_env_file):
+        load_dotenv(test_env_file)
+    else:
+        load_dotenv()
 except ImportError:
     pass
 
@@ -19,7 +24,9 @@ class Settings:
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
         # Database
-        self.DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+        self.DATABASE_URL = os.getenv(
+            "DATABASE_URL", "postgresql://user:password@localhost:5432/whatsapp_digest"
+        )
 
         # OpenAI
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -73,6 +80,9 @@ class Settings:
         self.WHATSAPP_SESSION_PATH = os.getenv(
             "WHATSAPP_SESSION_PATH", "./whatsapp_sessions"
         )
+        self.WHATSAPP_BRIDGE_URL = os.getenv(
+            "WHATSAPP_BRIDGE_URL", "http://localhost:3000"
+        )
 
         # Async processor settings
         self.SKIP_ASYNC_PROCESSOR = (
@@ -83,6 +93,9 @@ class Settings:
         self.USE_OPTIMIZED_REPOSITORIES = (
             os.getenv("USE_OPTIMIZED_REPOSITORIES", "false").lower() == "true"
         )
+
+        # Testing settings
+        self.TESTING = os.getenv("TEST_ENV_FILE") is not None
 
         # Admin settings
         self.ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")

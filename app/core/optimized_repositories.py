@@ -122,7 +122,7 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
             db.query(WhatsAppMessage)
             .filter(
                 WhatsAppMessage.chat_id == chat_id,
-                WhatsAppMessage.is_processed is False,
+                WhatsAppMessage.is_processed.is_(False),
             )
             .order_by(WhatsAppMessage.timestamp.asc())
             .limit(limit)
@@ -157,7 +157,7 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
             .filter(
                 WhatsAppMessage.chat_id == chat_id,
                 WhatsAppMessage.timestamp >= cutoff_time,
-                WhatsAppMessage.is_processed is False,
+                WhatsAppMessage.is_processed.is_(False),
             )
             .order_by(asc(WhatsAppMessage.timestamp))
             .all()
@@ -195,7 +195,7 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
                 func.avg(WhatsAppMessage.importance_score).label("avg_importance"),
                 func.max(WhatsAppMessage.importance_score).label("max_importance"),
                 func.count(WhatsAppMessage.id)
-                .filter(WhatsAppMessage.is_processed is False)
+                .filter(WhatsAppMessage.is_processed.is_(False))
                 .label("unprocessed_messages"),
             )
             .filter(
@@ -233,6 +233,41 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
             return result
         except SQLAlchemyError as e:
             logger.error(f"Error cleaning up old messages: {e}")
+            db.rollback()
+            return 0
+
+    def get_messages_by_chat_ids(
+        self, db: Session, chat_ids: List[int], limit: int = 100
+    ) -> List[WhatsAppMessage]:
+        """Get messages by chat IDs for integration tests"""
+        if not chat_ids:
+            return []
+
+        return (
+            db.query(WhatsAppMessage)
+            .filter(WhatsAppMessage.chat_id.in_(chat_ids))
+            .order_by(desc(WhatsAppMessage.timestamp))
+            .limit(limit)
+            .all()
+        )
+
+    def delete_old_messages(
+        self, db: Session, chat_ids: List[int], cutoff_time: datetime
+    ) -> int:
+        """Delete old messages for specified chats"""
+        try:
+            result = (
+                db.query(WhatsAppMessage)
+                .filter(
+                    WhatsAppMessage.chat_id.in_(chat_ids),
+                    WhatsAppMessage.timestamp < cutoff_time,
+                )
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+            return result
+        except SQLAlchemyError as e:
+            logger.error(f"Error deleting old messages: {e}")
             db.rollback()
             return 0
 
@@ -309,6 +344,21 @@ class OptimizedDigestLogRepository(BaseRepository):
             "avg_interval_hours": float(stats.avg_interval_hours or 0) / 3600,
             "period_days": days_back,
         }
+
+    def delete_old_digests(self, db: Session, cutoff_time: datetime) -> int:
+        """Delete old digests"""
+        try:
+            result = (
+                db.query(DigestLog)
+                .filter(DigestLog.created_at < cutoff_time)
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+            return result
+        except SQLAlchemyError as e:
+            logger.error(f"Error deleting old digests: {e}")
+            db.rollback()
+            return 0
 
 
 # Global instances of optimized repositories

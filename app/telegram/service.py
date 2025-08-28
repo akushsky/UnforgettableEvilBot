@@ -26,7 +26,7 @@ class TelegramService:
         Args:
             disable_ssl_verify: Description of disable_ssl_verify.
         """
-        self._bot = None
+        self._bot: Optional[Bot] = None
         if disable_ssl_verify is None:
             disable_ssl_verify = not settings.TELEGRAM_SSL_VERIFY
         self.disable_ssl_verify = disable_ssl_verify
@@ -149,7 +149,7 @@ class TelegramService:
         """Get the bot's username"""
         try:
             bot_info = await self.bot.get_me()
-            return bot_info.username
+            return bot_info.username or "unknown_bot"
         except Exception:
             return "unknown_bot"
 

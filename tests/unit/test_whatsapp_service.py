@@ -9,7 +9,7 @@ from app.whatsapp.service import WhatsAppService
 
 class TestWhatsAppService:
     def setup_method(self):
-        self.service = WhatsAppService("/test/session/path")
+        self.service = WhatsAppService("/test/session/path", "http://localhost:3000")
 
     def test_initialization(self):
         """Test service initialization"""

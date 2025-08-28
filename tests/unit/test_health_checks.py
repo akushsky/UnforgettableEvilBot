@@ -217,8 +217,12 @@ class TestHealthChecker:
         mock_telegram_service.assert_called_once()
 
     @patch("builtins.__import__")
-    async def test_check_whatsapp_bridge_success(self, mock_import):
+    @patch("app.health.checks.settings")
+    async def test_check_whatsapp_bridge_success(self, mock_settings, mock_import):
         """Test successful WhatsApp Bridge health check"""
+        # Mock settings
+        mock_settings.WHATSAPP_BRIDGE_URL = "http://localhost:3000"
+
         # Mock httpx import
         mock_httpx = Mock()
         mock_client = AsyncMock()
@@ -243,8 +247,14 @@ class TestHealthChecker:
         )
 
     @patch("builtins.__import__")
-    async def test_check_whatsapp_bridge_unhealthy_status(self, mock_import):
+    @patch("app.health.checks.settings")
+    async def test_check_whatsapp_bridge_unhealthy_status(
+        self, mock_settings, mock_import
+    ):
         """Test WhatsApp Bridge health check with unhealthy status code"""
+        # Mock settings
+        mock_settings.WHATSAPP_BRIDGE_URL = "http://localhost:3000"
+
         # Mock httpx import
         mock_httpx = Mock()
         mock_client = AsyncMock()
@@ -267,8 +277,12 @@ class TestHealthChecker:
         )
 
     @patch("builtins.__import__")
-    async def test_check_whatsapp_bridge_failure(self, mock_import):
+    @patch("app.health.checks.settings")
+    async def test_check_whatsapp_bridge_failure(self, mock_settings, mock_import):
         """Test WhatsApp Bridge health check with failure"""
+        # Mock settings
+        mock_settings.WHATSAPP_BRIDGE_URL = "http://localhost:3000"
+
         # Mock httpx import
         mock_httpx = Mock()
         mock_client = AsyncMock()
@@ -380,6 +394,27 @@ class TestHealthChecker:
 
         assert result["status"] == "unhealthy"
         assert result["error"] == "Rate limiter failed"
+        mock_rate_limiter.get_stats.assert_called_once()
+
+    @patch("builtins.__import__")
+    async def test_check_rate_limiter_exact_limits_warning(self, mock_import):
+        """Exact usage at 1.0 should be a warning, not unhealthy."""
+        mock_rate_limiter = Mock()
+        mock_rate_limiter.get_stats.return_value = {
+            "requests_last_minute": 100,
+            "minute_limit": 100,
+            "requests_last_hour": 1000,
+            "hour_limit": 1000,
+        }
+
+        mock_module = Mock()
+        mock_module.openai_rate_limiter = mock_rate_limiter
+        mock_import.return_value = mock_module
+
+        result = await self.health_checker.check_rate_limiter()
+
+        assert result["status"] == "warning"
+        assert result["error"] is None
         mock_rate_limiter.get_stats.assert_called_once()
 
     @patch.object(HealthChecker, "check_database")

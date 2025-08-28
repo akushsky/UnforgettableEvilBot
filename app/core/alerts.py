@@ -196,11 +196,14 @@ class AlertManager:
             )
         )
 
-        # Rule for low cache hit ratio
+        # Rule for low cache hit ratio (only when optimized repositories are enabled)
         self.add_rule(
             AlertRule(
                 name="low_cache_hit_ratio",
-                condition=lambda data: data.get("cache_hit_ratio", 1.0) < 0.5,
+                condition=lambda data: (
+                    data.get("cache_hit_ratio", 1.0) < 0.5
+                    and data.get("use_optimized_repositories", False)
+                ),
                 severity=AlertSeverity.WARNING,
                 title="Low Cache Hit Ratio",
                 message_template="Cache hit ratio is {cache_hit_ratio:.2f}",

@@ -26,7 +26,9 @@ router = APIRouter(prefix="/admin", tags=["web-admin"])
 templates = Jinja2Templates(directory="web/templates")
 
 # Create WhatsApp service for working with QR codes
-whatsapp_service = WhatsAppService(settings.WHATSAPP_SESSION_PATH)
+whatsapp_service = WhatsAppService(
+    settings.WHATSAPP_SESSION_PATH, settings.WHATSAPP_BRIDGE_URL
+)
 
 
 # Admin authentication routes
@@ -102,7 +104,7 @@ async def create_user(
     # Create default user settings automatically
     from app.core.user_utils import create_default_user_settings
 
-    create_default_user_settings(new_user.id, db)
+    create_default_user_settings(int(new_user.id), db)
 
     return RedirectResponse(url="/admin/users", status_code=303)
 
@@ -154,7 +156,7 @@ async def get_user_qr_code(user_id: int, db: Session = Depends(get_db)):
     repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
 
     try:
-        bridge_url = "http://localhost:3000"
+        bridge_url = settings.WHATSAPP_BRIDGE_URL
 
         # Get QR code directly without initialization
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -234,7 +236,9 @@ async def check_qr_code(user_id: int):
     """Check QR code availability"""
     try:
         async with httpx.AsyncClient() as client:
-            qr_response = await client.get(f"http://localhost:3000/qr/{user_id}")
+            qr_response = await client.get(
+                f"{settings.WHATSAPP_BRIDGE_URL}/qr/{user_id}"
+            )
 
             if qr_response.status_code == 200:
                 qr_data = qr_response.json()
@@ -263,7 +267,9 @@ async def send_qr_code(
     try:
         # Retrieve the QR code
         async with httpx.AsyncClient() as client:
-            qr_response = await client.get(f"http://localhost:3000/qr/{user_id}")
+            qr_response = await client.get(
+                f"{settings.WHATSAPP_BRIDGE_URL}/qr/{user_id}"
+            )
 
             if qr_response.status_code == 200:
                 qr_data = qr_response.json()
@@ -378,7 +384,9 @@ async def system_status():
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get("http://localhost:3000/health", timeout=5.0)
+                response = await client.get(
+                    f"{settings.WHATSAPP_BRIDGE_URL}/health", timeout=5.0
+                )
                 bridge_status = (
                     response.json()
                     if response.status_code == 200
@@ -404,7 +412,7 @@ async def get_user_whatsapp_status(user_id: int, db: Session = Depends(get_db)):
         db_status = user.whatsapp_connected
 
         # Additionally check via the bridge for a more accurate status
-        bridge_url = "http://localhost:3000"
+        bridge_url = settings.WHATSAPP_BRIDGE_URL
         bridge_connected = False
 
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -822,13 +830,13 @@ async def update_user_cleanup_settings(
         settings = get_user_settings(user_id, db)
 
         # Update settings
-        settings.max_message_age_hours = max_message_age_hours
-        settings.min_importance_level = min_importance_level
-        settings.include_media_messages = include_media_messages
-        settings.urgent_notifications = urgent_notifications
-        settings.daily_summary = daily_summary
-        settings.auto_add_new_chats = auto_add_new_chats
-        settings.auto_add_group_chats_only = auto_add_group_chats_only
+        settings.max_message_age_hours = int(max_message_age_hours)
+        settings.min_importance_level = int(min_importance_level)
+        settings.include_media_messages = bool(include_media_messages)
+        settings.urgent_notifications = bool(urgent_notifications)
+        settings.daily_summary = bool(daily_summary)
+        settings.auto_add_new_chats = bool(auto_add_new_chats)
+        settings.auto_add_group_chats_only = bool(auto_add_group_chats_only)
 
         db.commit()
 
@@ -1014,7 +1022,7 @@ async def suspend_user_web(user_id: int, db: Session = Depends(get_db)):
 
     # Immediately disconnect WhatsApp bridge for suspended user
     try:
-        bridge_url = "http://localhost:3000"
+        bridge_url = settings.WHATSAPP_BRIDGE_URL
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Send disconnect command to WhatsApp bridge
             disconnect_response = await client.post(
@@ -1088,7 +1096,7 @@ async def resume_user_web(user_id: int, db: Session = Depends(get_db)):
     # Always try to reconnect WhatsApp bridge for resumed user
     # The bridge will handle the reconnection logic
     try:
-        bridge_url = "http://localhost:3000"
+        bridge_url = settings.WHATSAPP_BRIDGE_URL
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Send reconnect command to WhatsApp bridge
             reconnect_response = await client.post(

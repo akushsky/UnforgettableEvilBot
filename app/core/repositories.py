@@ -116,7 +116,7 @@ class UserRepository(BaseRepository):
         """Get suspended users with active WhatsApp connections"""
         return (
             db.query(User)
-            .filter(User.is_active is False, User.whatsapp_connected)
+            .filter(User.is_active.is_(False), User.whatsapp_connected.is_(True))
             .all()
         )
 
@@ -125,7 +125,7 @@ class UserRepository(BaseRepository):
         return (
             db.query(User)
             .options(joinedload(User.monitored_chats))
-            .filter(User.is_active)
+            .filter(User.is_active.is_(True))
             .all()
         )
 
@@ -214,7 +214,7 @@ class WhatsAppMessageRepository(BaseRepository):
             db.query(WhatsAppMessage)
             .filter(
                 WhatsAppMessage.chat_id == chat_id,
-                WhatsAppMessage.is_processed is False,
+                WhatsAppMessage.is_processed.is_(False),
             )
             .order_by(WhatsAppMessage.timestamp.asc())
             .all()
@@ -244,7 +244,7 @@ class WhatsAppMessageRepository(BaseRepository):
             .filter(
                 WhatsAppMessage.chat_id == chat_id,
                 WhatsAppMessage.timestamp >= cutoff_time,
-                WhatsAppMessage.is_processed is False,
+                WhatsAppMessage.is_processed.is_(False),
             )
             .order_by(asc(WhatsAppMessage.timestamp))
             .all()
@@ -265,7 +265,7 @@ class WhatsAppMessageRepository(BaseRepository):
                 WhatsAppMessage.chat_id == chat_id,
                 WhatsAppMessage.timestamp >= cutoff_time,
                 WhatsAppMessage.importance_score >= importance_threshold,
-                WhatsAppMessage.is_processed is False,
+                WhatsAppMessage.is_processed.is_(False),
             )
             .order_by(desc(WhatsAppMessage.timestamp))
             .all()
@@ -360,7 +360,7 @@ class DigestLogRepository(BaseRepository):
             return True
 
         time_since_last = datetime.utcnow() - last_digest.created_at
-        return time_since_last >= timedelta(hours=interval_hours)
+        return bool(time_since_last >= timedelta(hours=interval_hours))
 
     def delete_old_digests(self, db: Session, cutoff_time: datetime) -> int:
         """Delete old digests"""

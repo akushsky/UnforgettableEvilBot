@@ -42,20 +42,36 @@ class OpenAIClient(BaseService):
                 temperature=temperature,
             )
 
-            content = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            if content is None:
+                raise ValueError("OpenAI returned empty content")
+            content = content.strip()
 
             # Record metrics
-            openai_monitor.record_request(
-                model=model,
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-                success=True,
-            )
+            if response.usage:
+                openai_monitor.record_request(
+                    model=model,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
+                    success=True,
+                )
 
-            self.log_operation(
-                "openai_request",
-                {"model": model, "tokens_used": response.usage.total_tokens},
-            )
+                self.log_operation(
+                    "openai_request",
+                    {"model": model, "tokens_used": response.usage.total_tokens},
+                )
+            else:
+                openai_monitor.record_request(
+                    model=model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    success=True,
+                )
+
+                self.log_operation(
+                    "openai_request",
+                    {"model": model, "tokens_used": 0},
+                )
 
             return content
 
