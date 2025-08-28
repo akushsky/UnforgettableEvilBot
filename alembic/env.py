@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
@@ -41,9 +42,15 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    # Use DATABASE_URL from environment, fallback to config
+    database_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+
+    # Fix old postgres:// format to postgresql://
+    if database_url and database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
     context.configure(
-        url=url,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -60,6 +67,16 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # Use DATABASE_URL from environment, fallback to config
+    database_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+
+    # Fix old postgres:// format to postgresql://
+    if database_url and database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+    # Override the config with the environment DATABASE_URL
+    config.set_main_option("sqlalchemy.url", database_url)
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

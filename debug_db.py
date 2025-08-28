@@ -152,6 +152,42 @@ def test_connection():
     print()
 
 
+def check_alembic_config():
+    """Check Alembic configuration"""
+    print("📋 Alembic Configuration Check")
+    print("=" * 50)
+
+    try:
+        from alembic.config import Config
+
+        # Check if alembic.ini exists
+        if os.path.exists("alembic.ini"):
+            print("✅ alembic.ini file found")
+
+            # Load config
+            alembic_cfg = Config("alembic.ini")
+            config_url = alembic_cfg.get_main_option("sqlalchemy.url")
+            env_url = os.getenv("DATABASE_URL")
+
+            print(f"   Config URL: {config_url}")
+            print(f"   Environment URL: {env_url}")
+
+            if env_url and env_url != config_url:
+                print(
+                    "   ⚠️  WARNING: Alembic config URL differs from environment DATABASE_URL"
+                )
+                print("   💡 The updated env.py should use the environment URL")
+            else:
+                print("   ✅ URLs match")
+        else:
+            print("❌ alembic.ini file not found")
+
+    except Exception as e:
+        print(f"❌ Error checking Alembic config: {e}")
+
+    print()
+
+
 def main():
     """Main debug function"""
     print("🐛 Database Connection Debug Tool")
@@ -160,6 +196,7 @@ def main():
 
     check_environment()
     check_dependencies()
+    check_alembic_config()
     test_connection()
 
     print("🏁 Debug complete")
