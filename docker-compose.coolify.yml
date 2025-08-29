@@ -23,7 +23,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
       # Application settings
-      - PYTHON_BACKEND_URL=http://localhost:9876
+      - PYTHON_BACKEND_URL=http://127.0.0.1:9876
       - DEBUG=false
       - LOG_LEVEL=INFO
 

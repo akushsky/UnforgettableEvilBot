@@ -55,7 +55,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - SECRET_KEY=${SECRET_KEY}
-              - PYTHON_BACKEND_URL=http://localhost:9876
+              - PYTHON_BACKEND_URL=http://127.0.0.1:9876
     volumes:
       - ./whatsapp_sessions:/app/whatsapp_sessions
       - ./logs:/app/logs

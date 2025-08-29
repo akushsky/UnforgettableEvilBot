@@ -80,10 +80,6 @@ for i in {1..30}; do
     fi
 done
 
-# Start auto-reconnection recovery
-log "🔄 Initiating auto-reconnection..."
-curl -X POST http://localhost:3000/restore-all > /dev/null 2>&1 || true
-
 # Start FastAPI application
 log "🐍 Starting FastAPI application..."
 export PYTHONPATH=/app:$PYTHONPATH
@@ -113,6 +109,12 @@ log "🎉 All services are running!"
 log "📊 FastAPI: http://localhost:${PORT:-9876}"
 log "🌉 Bridge: http://localhost:3000"
 log "📋 Admin Panel: http://localhost:${PORT:-9876}/admin"
+
+# Start auto-reconnection recovery after both services are ready
+log "🔄 Waiting for services to fully initialize..."
+sleep 5
+log "🔄 Initiating auto-reconnection..."
+curl -X POST http://localhost:3000/restore-all > /dev/null 2>&1 || true
 
 # Monitor processes
 while true; do

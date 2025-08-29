@@ -36,6 +36,11 @@ class OptimizedUserRepository(BaseRepository):
         """Get active users with caching"""
         return db.query(User).filter(User.is_active, User.whatsapp_connected).all()
 
+    @cached(prefix="active_users_with_whatsapp", ttl=60)  # cache for 1 minute
+    def get_active_users_with_whatsapp(self, db: Session) -> List[User]:
+        """Get active users with WhatsApp connected"""
+        return db.query(User).filter(User.is_active, User.whatsapp_connected).all()
+
     @cached(prefix="active_users_with_telegram", ttl=60)
     def get_active_users_with_telegram(self, db: Session) -> List[User]:
         """Get active users with configured Telegram channels"""

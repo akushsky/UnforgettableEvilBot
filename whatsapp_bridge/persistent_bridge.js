@@ -23,7 +23,7 @@ class PersistentWhatsAppBridge {
     this.restoreScheduled = false;
 
     this.app = express();
-    this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:9876';
+    this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:9876';
 
     this.stateFile = './client_states.json';
     this.sessionsRoot = path.resolve('./sessions');
@@ -834,17 +834,48 @@ class PersistentWhatsAppBridge {
       console.log('Starting automatic client restoration...');
       const results = [];
       try {
-        // Get active users from backend
-        let activeUserIds = [];
+        // Test basic connectivity first
+        console.log(`Testing connectivity to backend at ${this.pythonBackendUrl}...`);
         try {
-          const response = await axios.get(`${this.pythonBackendUrl}/api/whatsapp/active-users`, { timeout: 5000 });
-          if (response.status === 200) {
-            activeUserIds = response.data.active_users.map(user => user.id.toString());
-            console.log(`Found ${activeUserIds.length} active users: ${activeUserIds.join(', ')}`);
+          const healthResponse = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/health`, {
+            timeout: 5000,
+            headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+          });
+          console.log(`Backend health check successful: ${healthResponse.status}`);
+        } catch (healthError) {
+          console.error(`Backend health check failed: ${healthError.message}`);
+          console.log('Proceeding with local session restoration only');
+          // Continue with local restoration even if backend is unavailable
+        }
+
+        // Get active users from backend with retry logic
+        let activeUserIds = [];
+        let backendAvailable = false;
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            console.log(`Attempting to connect to backend (attempt ${attempt}/3)...`);
+            const response = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/active-users`, {
+              timeout: 10000,
+              headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+            });
+            if (response.status === 200) {
+              activeUserIds = response.data.active_users.map(user => user.id.toString());
+              console.log(`Found ${activeUserIds.length} active users: ${activeUserIds.join(', ')}`);
+              backendAvailable = true;
+              break;
+            }
+          } catch (error) {
+            console.error(`Failed to get active users from backend (attempt ${attempt}/3):`, error.message);
+            if (attempt < 3) {
+              console.log(`Retrying in ${attempt * 2} seconds...`);
+              await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+            }
           }
-        } catch (error) {
-          console.error('Failed to get active users from backend:', error.message);
-          // Fallback: restore all sessions if backend is unavailable
+        }
+
+        if (!backendAvailable) {
+          console.log('Backend unavailable after 3 attempts, proceeding with local session restoration');
           activeUserIds = null;
         }
 

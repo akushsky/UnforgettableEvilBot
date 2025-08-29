@@ -309,6 +309,31 @@ def mock_settings():
     return settings
 
 
+def create_test_user(
+    db_session,
+    username="testuser",
+    email="test@example.com",
+    whatsapp_connected=False,
+    is_active=True,
+    **kwargs,
+):
+    """Create a test user in the database"""
+    from app.auth.security import get_password_hash
+
+    user = User(
+        username=username,
+        email=email,
+        hashed_password=get_password_hash("testpassword"),
+        whatsapp_connected=whatsapp_connected,
+        is_active=is_active,
+        **kwargs,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
 @pytest.fixture
 def client(db_session) -> TestClient:
     """Create a test client with DB dependency override."""

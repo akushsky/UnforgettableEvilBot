@@ -175,6 +175,37 @@ async def whatsapp_connected(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/health")
+async def whatsapp_webhook_health():
+    """Health check endpoint for WhatsApp webhooks"""
+    return {"status": "healthy", "service": "whatsapp-webhooks"}
+
+
+@router.get("/active-users")
+async def get_active_users(db: Session = Depends(get_db)):
+    """Get active users for WhatsApp bridge restoration"""
+    try:
+        # Get active users with WhatsApp connected
+        active_users = (
+            repository_factory.get_user_repository().get_active_users_with_whatsapp(db)
+        )
+
+        return {
+            "active_users": [
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "whatsapp_connected": user.whatsapp_connected,
+                    "is_active": user.is_active,
+                }
+                for user in active_users
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting active users: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/disconnected")
 async def whatsapp_disconnected(
     connection: WhatsAppConnectionWebhook, db: Session = Depends(get_db)
