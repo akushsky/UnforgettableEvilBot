@@ -26,8 +26,11 @@ class PersistentWhatsAppBridge {
     this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:9876';
 
     this.stateFile = './client_states.json';
-    this.sessionsRoot = path.resolve('./sessions');
+    // Use environment variable for session path, fallback to local sessions
+    this.sessionsRoot = process.env.WHATSAPP_SESSION_PATH || path.resolve('./sessions');
+    console.log(`WhatsApp Bridge sessions root: ${this.sessionsRoot}`);
     if (!fssync.existsSync(this.sessionsRoot)) {
+      console.log(`Creating sessions directory: ${this.sessionsRoot}`);
       fssync.mkdirSync(this.sessionsRoot, { recursive: true });
     }
 
