@@ -371,7 +371,7 @@
 <div class="modal fade" id="settingsModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form action="/admin/users/{{ user.id }}/settings" method="post">
+            <form action="/admin/users/{{ user.id }}/settings" method="post" onsubmit="console.log('Form submitting...'); return true;">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-cog"></i> Настройки пользователя</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -399,10 +399,9 @@
                         </select>
                     </div>
                 </div>
-                </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Сохранить настройки</button>
+                    <button type="submit" class="btn btn-primary" onclick="console.log('Submit button clicked');">Сохранить настройки</button>
                 </div>
             </form>
         </div>

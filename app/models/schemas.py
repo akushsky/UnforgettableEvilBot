@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 
 
 class UserCreate(BaseModel):
@@ -94,13 +94,13 @@ class WhatsAppConnectionWebhook(BaseModel):
 class WhatsAppMessageWebhook(BaseModel):
     """WhatsApp message webhook schema"""
 
-    userId: int
-    messageId: str = Field(validation_alias="id")
+    userId: str
+    messageId: str
     chatId: str
     chatName: Optional[str] = ""
     chatType: str = "unknown"
-    sender: Optional[str] = Field(default=None, validation_alias="from")
-    content: Optional[str] = Field(default="", validation_alias="body")
+    sender: Optional[str] = None
+    content: Optional[str] = ""
     timestamp: str
     importance: int = 2
     hasMedia: bool = False

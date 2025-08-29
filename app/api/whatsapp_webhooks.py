@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.repository_factory import repository_factory
 from app.core.validators import SecurityValidators
 from app.database.connection import get_db
-from app.models.database import WhatsAppMessage
+from app.models.database import MonitoredChat, User, WhatsAppMessage
 from app.models.schemas import WhatsAppConnectionWebhook, WhatsAppMessageWebhook
 from app.openai_service.service import OpenAIService
 from config.logging_config import get_logger
@@ -41,6 +41,116 @@ class WhatsAppReconnectionService:
 reconnection_service = WhatsAppReconnectionService()
 
 
+def _validate_and_sanitize_message(
+    message: WhatsAppMessageWebhook,
+) -> tuple[str, str, str | None]:
+    """Validate and sanitize message input data"""
+    sanitized_content = message.content or ""
+    sanitized_chat_name = (
+        SecurityValidators.sanitize_input(message.chatName, max_length=100)
+        if message.chatName
+        else ""
+    )
+    sanitized_sender = (
+        SecurityValidators.sanitize_input(message.sender, max_length=100)
+        if message.sender
+        else None
+    )
+    return sanitized_content, sanitized_chat_name, sanitized_sender
+
+
+def _get_user_id(message: WhatsAppMessageWebhook) -> int:
+    """Extract and validate user ID from message"""
+    try:
+        return int(message.userId)
+    except ValueError:
+        logger.warning(f"Invalid user ID format: {message.userId}")
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+
+def _validate_user(user_id: int, db: Session) -> User:
+    """Validate that user exists and is active"""
+    user = repository_factory.get_user_repository().get_by_id(db, user_id)
+    if not user:
+        logger.warning(f"User {user_id} not found")
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not user.is_active:
+        logger.info(
+            f"User {user_id} ({user.username}) is suspended - skipping message processing"
+        )
+        raise HTTPException(status_code=200, detail="User is suspended")
+
+    return user
+
+
+def _validate_monitored_chat(
+    user_id: int, chat_id: str, chat_name: str, db: Session
+) -> MonitoredChat:
+    """Validate that chat is being monitored"""
+    monitored_chat = (
+        repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(
+            db, user_id, chat_id
+        )
+    )
+
+    if not monitored_chat:
+        logger.info(
+            f"Chat {chat_id} ({chat_name}) is not monitored by user {user_id} - skipping message"
+        )
+        raise HTTPException(status_code=200, detail="Chat is not being monitored")
+
+    return monitored_chat
+
+
+def _check_duplicate_message(message_id: str, db: Session) -> None:
+    """Check if message has already been processed"""
+    existing_message = (
+        repository_factory.get_whatsapp_message_repository().get_by_message_id(
+            db, message_id
+        )
+    )
+
+    if existing_message:
+        logger.info(f"Message {message_id} already processed")
+        raise HTTPException(status_code=200, detail="Message already processed")
+
+
+def _parse_timestamp(timestamp: str) -> datetime:
+    """Parse timestamp safely"""
+    try:
+        if timestamp.endswith("Z"):
+            return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        else:
+            return datetime.fromisoformat(timestamp)
+    except Exception:
+        return datetime.utcnow()
+
+
+def _save_message(
+    message: WhatsAppMessageWebhook,
+    monitored_chat: MonitoredChat,
+    sanitized_content: str,
+    sanitized_sender: str | None,
+    timestamp: datetime,
+    db: Session,
+) -> None:
+    """Save the message to the database"""
+    whatsapp_message = WhatsAppMessage(
+        chat_id=monitored_chat.id,
+        message_id=message.messageId,
+        sender=sanitized_sender or "",
+        content=sanitized_content,
+        timestamp=timestamp,
+        importance_score=message.importance,
+        has_media=message.hasMedia,
+        is_processed=False,
+    )
+
+    db.add(whatsapp_message)
+    db.commit()
+
+
 @router.post("/message")
 async def receive_whatsapp_message(
     message: WhatsAppMessageWebhook,
@@ -49,84 +159,34 @@ async def receive_whatsapp_message(
 ):
     """Receive a new message from WhatsApp via the Node.js bridge with secure validation"""
     try:
-        # Validate and sanitize input data
-        # Preserve content exactly as received to pass tests expecting special characters
-        sanitized_content = message.content or ""
-
-        # Optional fields: chatName and sender
-        sanitized_chat_name = (
-            SecurityValidators.sanitize_input(message.chatName, max_length=100)
-            if message.chatName
-            else ""
-        )
-        sanitized_sender = (
-            SecurityValidators.sanitize_input(message.sender, max_length=100)
-            if message.sender
-            else None
-        )
-
         logger.info(f"Received WhatsApp message for user {message.userId}")
 
-        # Check whether the user exists and is active
-        user = repository_factory.get_user_repository().get_by_id(db, message.userId)
-        if not user:
-            logger.warning(f"User {message.userId} not found")
-            raise HTTPException(status_code=404, detail="User not found")
+        # Validate and sanitize input data
+        (
+            sanitized_content,
+            sanitized_chat_name,
+            sanitized_sender,
+        ) = _validate_and_sanitize_message(message)
 
-        # Skip processing for suspended users
-        if not user.is_active:
-            logger.info(
-                f"User {message.userId} ({user.username}) is suspended - skipping message processing"
-            )
-            return {"status": "ignored", "message": "User is suspended"}
+        # Validate user
+        user_id = _get_user_id(message)
+        _validate_user(user_id, db)
 
-        # Check whether this chat is being monitored
-        monitored_chat = (
-            repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(
-                db, message.userId, message.chatId
-            )
+        # Validate monitored chat
+        monitored_chat = _validate_monitored_chat(
+            user_id, message.chatId, sanitized_chat_name, db
         )
 
-        if not monitored_chat:
-            logger.info(
-                f"Chat {message.chatId} ({sanitized_chat_name}) is not monitored by user {message.userId} - skipping message"
-            )
-            return {"status": "ignored", "message": "Chat is not being monitored"}
+        # Check for duplicate message
+        _check_duplicate_message(message.messageId, db)
 
-        # Check whether we've already processed this message
-        existing_message = (
-            repository_factory.get_whatsapp_message_repository().get_by_message_id(
-                db, message.messageId
-            )
+        # Parse timestamp
+        timestamp = _parse_timestamp(message.timestamp)
+
+        # Save message
+        _save_message(
+            message, monitored_chat, sanitized_content, sanitized_sender, timestamp, db
         )
-
-        if existing_message:
-            logger.info(f"Message {message.messageId} already processed")
-            return {"status": "duplicate", "message": "Message already processed"}
-
-        # Parse timestamp safely
-        try:
-            if message.timestamp.endswith("Z"):
-                ts = datetime.fromisoformat(message.timestamp.replace("Z", "+00:00"))
-            else:
-                ts = datetime.fromisoformat(message.timestamp)
-        except Exception:
-            ts = datetime.utcnow()
-
-        # Save the message to the database synchronously
-        whatsapp_message = WhatsAppMessage(
-            chat_id=monitored_chat.id,
-            message_id=message.messageId,
-            sender=sanitized_sender or "",
-            content=sanitized_content,
-            timestamp=ts,
-            importance_score=message.importance,
-            has_media=message.hasMedia,
-            is_processed=False,
-        )
-
-        db.add(whatsapp_message)
-        db.commit()
 
         return {"status": "success", "message": "Message received and processed"}
 

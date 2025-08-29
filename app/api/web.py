@@ -366,11 +366,17 @@ async def update_user_settings(
     db: Session = Depends(get_db),
 ):
     """Update user settings"""
+    logger.info(
+        f"Updating user settings for user {user_id}: telegram_channel_id={telegram_channel_id}, digest_interval_hours={digest_interval_hours}"
+    )
+
     user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
 
     user.telegram_channel_id = telegram_channel_id
     user.digest_interval_hours = digest_interval_hours
     db.commit()
+
+    logger.info(f"Successfully updated user settings for user {user_id}")
 
     return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
 

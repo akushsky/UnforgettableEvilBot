@@ -89,14 +89,15 @@ class TestAPIIntegration:
     ):
         """Test WhatsApp webhook endpoint with message data."""
         webhook_data = {
-            "userId": test_user.id,
-            "id": "test_message_id",
-            "body": "Test message content",
+            "userId": str(test_user.id),
+            "messageId": "test_message_id",
+            "content": "Test message content",
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",  # Add the from field
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
@@ -131,14 +132,15 @@ class TestAPIIntegration:
     ):
         """Test handling of duplicate message IDs."""
         webhook_data = {
-            "userId": test_user.id,
-            "id": "duplicate_message_id",
-            "body": "First message",
+            "userId": str(test_user.id),
+            "messageId": "duplicate_message_id",
+            "content": "First message",
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
@@ -147,7 +149,7 @@ class TestAPIIntegration:
         assert response1.status_code == 200
 
         # Send duplicate message
-        webhook_data["body"] = "Second message"
+        webhook_data["content"] = "Second message"
         response2 = client.post("/webhook/whatsapp/message", json=webhook_data)
         assert response2.status_code == 200  # Should handle gracefully
 
@@ -164,14 +166,15 @@ class TestAPIIntegration:
         """Test handling of large message content."""
         large_content = "x" * 10000  # 10KB message
         webhook_data = {
-            "userId": test_user.id,
-            "id": "large_message_id",
-            "body": large_content,
+            "userId": str(test_user.id),
+            "messageId": "large_message_id",
+            "content": large_content,
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
@@ -184,14 +187,15 @@ class TestAPIIntegration:
         """Test handling of special characters in message content."""
         special_content = "Test message with émojis 🚀 and special chars: <>&\"'"
         webhook_data = {
-            "userId": test_user.id,
-            "id": "special_chars_message_id",
-            "body": special_content,
+            "userId": str(test_user.id),
+            "messageId": "special_chars_message_id",
+            "content": special_content,
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
@@ -209,21 +213,22 @@ class TestAPIIntegration:
     def test_webhook_endpoint_rate_limiting(self, client, test_user, test_chat):
         """Test rate limiting on webhook endpoint."""
         webhook_data = {
-            "userId": test_user.id,
-            "id": "rate_limit_test",
-            "body": "Test message",
+            "userId": str(test_user.id),
+            "messageId": "rate_limit_test",
+            "content": "Test message",
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
         # Send multiple requests rapidly
         responses = []
         for i in range(10):
-            webhook_data["id"] = f"rate_limit_test_{i}"
+            webhook_data["messageId"] = f"rate_limit_test_{i}"
             response = client.post("/webhook/whatsapp/message", json=webhook_data)
             responses.append(response)
 
@@ -234,14 +239,15 @@ class TestAPIIntegration:
     def test_webhook_endpoint_database_connection(self, client, test_user, test_chat):
         """Test webhook endpoint with database connection."""
         webhook_data = {
-            "userId": test_user.id,
-            "id": "db_connection_test",
-            "body": "Database connection test",
+            "userId": str(test_user.id),
+            "messageId": "db_connection_test",
+            "content": "Database connection test",
             "timestamp": datetime.utcnow().isoformat(),
             "chatId": test_chat.chat_id,
-            "from": "1234567890",
-            "fromMe": False,
-            "type": "text",
+            "sender": "1234567890",
+            "chatName": "Test Chat",
+            "chatType": "group",
+            "importance": 2,
             "hasMedia": False,
         }
 
