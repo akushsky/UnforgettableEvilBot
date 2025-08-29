@@ -783,8 +783,28 @@ async def health_check():  # noqa: C901
             checks["application"] = {"status": "error", "error": str(e)}
             errors.append(f"Application metrics check failed: {str(e)}")
 
-        # 7. Performance metrics
+        # 7. Resource savings and Performance metrics
         try:
+            # Resource savings is optional in health; guard against errors
+            try:
+                from app.core.resource_savings import resource_savings_service
+
+                with SessionLocal() as rs_db:
+                    resource_savings = resource_savings_service.get_total_savings(
+                        rs_db, days_back=30
+                    )
+            except Exception:
+                resource_savings = {
+                    "total_whatsapp_connections_saved": 0,
+                    "total_messages_processed_saved": 0,
+                    "total_openai_requests_saved": 0,
+                    "total_memory_mb_saved": 0.0,
+                    "total_cpu_seconds_saved": 0.0,
+                    "total_openai_cost_saved_usd": 0.0,
+                    "period_days": 30,
+                    "records_count": 0,
+                }
+
             # Get real performance metrics
             if hasattr(metrics_collector, "get_stats"):
                 metrics_data = metrics_collector.get_stats()
@@ -1105,24 +1125,26 @@ async def get_metrics():
                     ),
                 },
                 "resource_savings": {
-                    "total_whatsapp_connections_saved": resource_savings[
-                        "total_whatsapp_connections_saved"
-                    ],
-                    "total_messages_processed_saved": resource_savings[
-                        "total_messages_processed_saved"
-                    ],
-                    "total_openai_requests_saved": resource_savings[
-                        "total_openai_requests_saved"
-                    ],
-                    "total_memory_mb_saved": resource_savings["total_memory_mb_saved"],
-                    "total_cpu_seconds_saved": resource_savings[
-                        "total_cpu_seconds_saved"
-                    ],
-                    "total_openai_cost_saved_usd": resource_savings[
-                        "total_openai_cost_saved_usd"
-                    ],
-                    "period_days": resource_savings["period_days"],
-                    "records_count": resource_savings["records_count"],
+                    "total_whatsapp_connections_saved": resource_savings.get(
+                        "total_whatsapp_connections_saved", 0
+                    ),
+                    "total_messages_processed_saved": resource_savings.get(
+                        "total_messages_processed_saved", 0
+                    ),
+                    "total_openai_requests_saved": resource_savings.get(
+                        "total_openai_requests_saved", 0
+                    ),
+                    "total_memory_mb_saved": resource_savings.get(
+                        "total_memory_mb_saved", 0.0
+                    ),
+                    "total_cpu_seconds_saved": resource_savings.get(
+                        "total_cpu_seconds_saved", 0.0
+                    ),
+                    "total_openai_cost_saved_usd": resource_savings.get(
+                        "total_openai_cost_saved_usd", 0.0
+                    ),
+                    "period_days": resource_savings.get("period_days", 30),
+                    "records_count": resource_savings.get("records_count", 0),
                     "current_system": current_system_savings,
                 },
                 "components": {

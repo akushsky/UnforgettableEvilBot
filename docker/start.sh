@@ -87,7 +87,12 @@ curl -X POST http://localhost:3000/restore-all > /dev/null 2>&1 || true
 # Start FastAPI application
 log "🐍 Starting FastAPI application..."
 export PYTHONPATH=/app:$PYTHONPATH
-uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+# Enable reload only when DEBUG=true (default: false in Coolify)
+if [ "${DEBUG}" = "true" ]; then
+    uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+else
+    uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+fi
 API_PID=$!
 
 # Wait for API readiness
@@ -125,7 +130,11 @@ while true; do
     if ! kill -0 "$API_PID" 2>/dev/null; then
         log "❌ FastAPI died, restarting..."
         export PYTHONPATH=/app:$PYTHONPATH
-        uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+        if [ "${DEBUG}" = "true" ]; then
+            uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+        else
+            uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
+        fi
         API_PID=$!
     fi
 
