@@ -24,6 +24,7 @@ trap cleanup SIGTERM SIGINT
 
 # Wait for database readiness
 log "🔍 Checking database connection..."
+export PYTHONPATH=/app:$PYTHONPATH
 python -c "
 import time
 import sys
@@ -46,6 +47,7 @@ else:
 
 # Run migrations
 log "🔄 Running database migrations..."
+export PYTHONPATH=/app:$PYTHONPATH
 alembic upgrade head
 
 # Create directories if they don't exist
@@ -79,6 +81,7 @@ curl -X POST http://localhost:3000/restore-all > /dev/null 2>&1 || true
 
 # Start FastAPI application
 log "🐍 Starting FastAPI application..."
+export PYTHONPATH=/app:$PYTHONPATH
 uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
 API_PID=$!
 
@@ -116,6 +119,7 @@ while true; do
 
     if ! kill -0 "$API_PID" 2>/dev/null; then
         log "❌ FastAPI died, restarting..."
+        export PYTHONPATH=/app:$PYTHONPATH
         uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
         API_PID=$!
     fi

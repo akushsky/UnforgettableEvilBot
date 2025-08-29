@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Testing
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: whatsapp-digest-test-db
+    environment:
+      - POSTGRES_DB=whatsapp_digest_test
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5433:5432"  # Use different port to avoid conflicts with main DB
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d whatsapp_digest_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Redis for Testing
+  redis-test:
+    image: redis:7-alpine
+    container_name: whatsapp-digest-test-redis
+    ports:
+      - "6380:6379"  # Expose test redis on a non-default port
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres-test-data:

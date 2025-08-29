@@ -223,14 +223,10 @@ app = FastAPI(
 # Initialize templates
 templates = Jinja2Templates(directory="web/templates")
 
-# Trusted Host middleware - protection against Host header attacks
+# Trusted Host middleware - allow all hosts
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=(
-        ["*"]
-        if settings.LOG_LEVEL == "DEBUG"
-        else ["yourdomain.com", "api.yourdomain.com"]
-    ),
+    allowed_hosts=["*"],
 )
 
 

@@ -370,7 +370,7 @@ class LocalDevelopmentServer:
         """Start FastAPI application"""
         self.log("🐍 Starting FastAPI application...")
         process = self.run_command(
-            f"uvicorn main:app --host 127.0.0.1 --port {settings.PORT} --reload",
+            f"uvicorn main:app --host 0.0.0.0 --port {settings.PORT} --reload",
             "api",
             "logs/api.log",
         )
@@ -378,7 +378,7 @@ class LocalDevelopmentServer:
         if process:
             self.log("⏳ Waiting for FastAPI to be ready...")
             # Use /health as readiness probe
-            if self.check_health(f"http://localhost:{settings.PORT}/health"):
+            if self.check_health(f"http://127.0.0.1:{settings.PORT}/health"):
                 self.log("✅ FastAPI is ready!")
                 return True
             else:
