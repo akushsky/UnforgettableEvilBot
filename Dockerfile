@@ -69,9 +69,10 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 COPY --chown=appuser:appuser docker/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Copy debug script
+# Copy debug scripts
 COPY --chown=appuser:appuser debug_db.py /app/debug_db.py
-RUN chmod +x /app/debug_db.py
+COPY --chown=appuser:appuser debug_imports.py /app/debug_imports.py
+RUN chmod +x /app/debug_db.py /app/debug_imports.py
 
 # Expose ports
 EXPOSE 9876

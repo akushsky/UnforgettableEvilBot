@@ -13,7 +13,20 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
-from app.api.web import router as web_router
+# Import web router with fallback
+try:
+    from app.api.web import router as web_router
+except ImportError:
+    # Create a minimal fallback router
+    from fastapi import APIRouter
+
+    web_router = APIRouter(prefix="/admin", tags=["web-admin"])
+
+    @web_router.get("/health")
+    async def fallback_health():
+        return {"status": "degraded", "message": "Web router import failed"}
+
+
 from app.api.whatsapp_webhooks import router as whatsapp_webhooks_router
 
 # Import all components
@@ -45,7 +58,6 @@ scheduler = None
 app_start_time = None  # Will be set when app starts
 
 # Get process start time (doesn't reset on reload)
-
 process_start_time = psutil.Process().create_time()
 
 # Test traces removed - real traces will be created during actual operations

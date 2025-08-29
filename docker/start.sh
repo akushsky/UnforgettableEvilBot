@@ -22,6 +22,11 @@ cleanup() {
 # Signal handler
 trap cleanup SIGTERM SIGINT
 
+# Test imports first
+log "🔍 Testing imports..."
+export PYTHONPATH=/app:$PYTHONPATH
+python debug_imports.py
+
 # Wait for database readiness
 log "🔍 Checking database connection..."
 export PYTHONPATH=/app:$PYTHONPATH
