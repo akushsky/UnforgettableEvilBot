@@ -1,7 +1,7 @@
 """add_resource_savings_table
 
 Revision ID: 3e7da6056948
-Revises: 2bffd4260324
+Revises: b2419b8e0ca6
 Create Date: 2025-08-24 00:30:25.147521
 
 """
