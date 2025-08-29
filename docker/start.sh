@@ -79,7 +79,7 @@ curl -X POST http://localhost:3000/restore-all > /dev/null 2>&1 || true
 
 # Start FastAPI application
 log "🐍 Starting FastAPI application..."
-uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config logging.conf > /app/logs/api.log 2>&1 &
+uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
 API_PID=$!
 
 # Wait for API readiness
@@ -116,7 +116,7 @@ while true; do
 
     if ! kill -0 "$API_PID" 2>/dev/null; then
         log "❌ FastAPI died, restarting..."
-        uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config logging.conf > /app/logs/api.log 2>&1 &
+        uvicorn main:app --host 0.0.0.0 --port ${PORT:-9876} --reload --log-config /app/logging.conf > /app/logs/api.log 2>&1 &
         API_PID=$!
     fi
 

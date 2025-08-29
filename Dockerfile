@@ -50,6 +50,9 @@ COPY --from=node-builder /app/bridge/node_modules /app/whatsapp_bridge/node_modu
 # Copy application code
 COPY . .
 
+# Copy logging configuration
+COPY logging.conf /app/logging.conf
+
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/whatsapp_sessions /app/logs /app/data \
     && chown -R appuser:appuser /app
