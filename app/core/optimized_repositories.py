@@ -177,6 +177,27 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
             .all()
         )
 
+    def get_important_messages_for_digest(
+        self,
+        db: Session,
+        chat_id: int,
+        hours_back: int = 24,
+        importance_threshold: int = 3,
+    ) -> List[WhatsAppMessage]:
+        """Get important messages for digest with optimization"""
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        return (
+            db.query(WhatsAppMessage)
+            .filter(
+                WhatsAppMessage.chat_id == chat_id,
+                WhatsAppMessage.timestamp >= cutoff_time,
+                WhatsAppMessage.importance_score >= importance_threshold,
+                WhatsAppMessage.is_processed.is_(False),
+            )
+            .order_by(desc(WhatsAppMessage.timestamp))
+            .all()
+        )
+
     def mark_as_processed_batch(self, db: Session, message_ids: List[int]) -> int:
         """Batch mark messages as processed"""
         if not message_ids:
@@ -196,6 +217,10 @@ class OptimizedWhatsAppMessageRepository(BaseRepository):
             logger.error(f"Error in batch mark as processed: {e}")
             db.rollback()
             return 0
+
+    def mark_as_processed(self, db: Session, message_ids: List[int]) -> int:
+        """Mark messages as processed (alias for mark_as_processed_batch for compatibility)"""
+        return self.mark_as_processed_batch(db, message_ids)
 
     def get_message_stats(
         self, db: Session, chat_id: int, days_back: int = 7

@@ -34,6 +34,14 @@ class PersistentWhatsAppBridge {
       fssync.mkdirSync(this.sessionsRoot, { recursive: true });
     }
 
+    // Log environment info for debugging
+    console.log('Environment info:');
+    console.log('- Node.js version:', process.version);
+    console.log('- Platform:', process.platform);
+    console.log('- Architecture:', process.arch);
+    console.log('- Puppeteer executable path:', process.env.PUPPETEER_EXECUTABLE_PATH || 'default');
+    console.log('- Chrome executable path:', process.env.CHROME_EXECUTABLE_PATH || 'default');
+
     this.setupExpress();
     this.loadPersistedStates().catch(() => {});
     this.startAutoReconnect();
@@ -316,7 +324,17 @@ class PersistentWhatsAppBridge {
               '--disable-gpu',
               '--disable-web-security',
               '--disable-features=VizDisplayCompositor',
+              '--disable-background-timer-throttling',
+              '--disable-backgrounding-occluded-windows',
+              '--disable-renderer-backgrounding',
+              '--disable-field-trial-config',
+              '--disable-ipc-flooding-protection',
+              '--enable-logging',
+              '--log-level=0',
+              '--v=1',
             ],
+            timeout: 60000,
+            protocolTimeout: 60000,
           },
           restartOnAuthFail: true,
           takeoverOnConflict: true,
@@ -379,11 +397,24 @@ class PersistentWhatsAppBridge {
     client.on('loading_screen', (p, m) => console.log(`load ${userId}: ${p}% - ${m}`));
     client.on('change_state', (s) => console.log(`state ${userId}: ${s}`));
 
+    // Add Puppeteer debugging
+    client.on('puppeteer_page_created', (page) => {
+      console.log(`Puppeteer page created for ${userId}`);
+      page.on('console', (msg) => {
+        if (msg.type() === 'error') {
+          console.log(`Page error for ${userId}:`, msg.text());
+        }
+      });
+      page.on('pageerror', (error) => {
+        console.log(`Page error for ${userId}:`, error.message);
+      });
+    });
+
     client.on('authenticated', () => {
       console.log(`authenticated ${userId}`);
       this.updateClientState(userId, { authFailure: false, hasSession: true });
 
-      // Set up message handling even if ready event doesn't fire
+            // Set up message handling even if ready event doesn't fire
       setTimeout(async () => {
         const state = this.clientStates.get(userId) || {};
         if (!state.connected) {
@@ -413,6 +444,42 @@ class PersistentWhatsAppBridge {
           }
         }
       }, 3000);
+
+      // Additional fallback: check if client is ready after a longer delay
+      setTimeout(async () => {
+        const state = this.clientStates.get(userId) || {};
+        const client = this.clients.get(userId);
+        if (client && !state.connected) {
+          try {
+            const st = await client.getState();
+            if (st === 'CONNECTED') {
+              console.log(`Force setting client ${userId} as ready after delay`);
+              this.updateClientState(userId, {
+                connected: true,
+                lastSeen: new Date().toISOString(),
+                hasSession: true,
+              });
+
+              // Force trigger ready-like behavior
+              try {
+                await this.ensureWebLoaded(client);
+                console.log(`Web interface loaded for ${userId} (delayed)`);
+
+                // Notify backend
+                axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
+                  userId,
+                  timestamp: new Date().toISOString(),
+                  clientInfo: { connected: true, forced: true },
+                }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
+              } catch (e) {
+                console.log(`Delayed web load failed for ${userId}:`, e.message);
+              }
+            }
+          } catch (e) {
+            console.log(`State check failed for ${userId}:`, e.message);
+          }
+        }
+      }, 10000);
     });
 
     client.on('ready', async () => {
@@ -445,6 +512,15 @@ class PersistentWhatsAppBridge {
       console.log(`Received message for ${userId}: ${message.body?.substring(0, 50)}...`);
       try { await this.handleIncomingMessage(userId, message); }
       catch (e) { console.error(`handle msg ${userId}:`, e); }
+    });
+
+    // Add additional message event handlers for debugging
+    client.on('message', async (message) => {
+      console.log(`Message event for ${userId}: ${message.body?.substring(0, 50)}...`);
+    });
+
+    client.on('message_revoke_everyone', async (message) => {
+      console.log(`Message revoked for ${userId}: ${message.body?.substring(0, 50)}...`);
     });
 
     client.on('disconnected', (reason) => {
@@ -556,14 +632,36 @@ class PersistentWhatsAppBridge {
 
   async ensureWebLoaded(client) {
     const page = client.pupPage;
-    if (!page || typeof page.waitForFunction !== 'function') return;
-    await page.waitForFunction(
-      () => {
-        const S = window?.Store;
-        return !!(S && (S.Chat || S.Chats) && (S.Msg || S.Messages));
-      },
-      { timeout: 45000 }
-    );
+    if (!page || typeof page.waitForFunction !== 'function') {
+      console.log('No Puppeteer page available for web loading check');
+      return;
+    }
+
+    try {
+      console.log('Waiting for WhatsApp Web interface to load...');
+      await page.waitForFunction(
+        () => {
+          const S = window?.Store;
+          const hasStore = !!(S && (S.Chat || S.Chats) && (S.Msg || S.Messages));
+          console.log('WhatsApp Web Store check:', { hasStore, storeKeys: S ? Object.keys(S) : 'no store' });
+          return hasStore;
+        },
+        { timeout: 45000 }
+      );
+      console.log('WhatsApp Web interface loaded successfully');
+    } catch (error) {
+      console.log('Failed to load WhatsApp Web interface:', error.message);
+
+      // Try to get more debugging info
+      try {
+        const pageContent = await page.content();
+        console.log('Page title:', await page.title());
+        console.log('Page URL:', page.url());
+        console.log('Page content length:', pageContent.length);
+      } catch (e) {
+        console.log('Could not get page debugging info:', e.message);
+      }
+    }
   }
 
   async getChatsLite(client) {
