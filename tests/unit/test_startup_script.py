@@ -90,7 +90,7 @@ mkdir -p /app/logs
 # Start WhatsApp Bridge in background
 log "🌉 Starting WhatsApp Bridge..."
 cd /app/whatsapp_bridge
-node persistent_bridge.js > /app/logs/bridge.log 2>&1 &
+        node bridge.js > /app/logs/bridge.log 2>&1 &
 BRIDGE_PID=$!
 cd /app
 
@@ -150,7 +150,7 @@ while true; do
     if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
         log "❌ WhatsApp Bridge died, restarting..."
         cd /app/whatsapp_bridge
-        node persistent_bridge.js > /app/logs/bridge.log 2>&1 &
+        node bridge.js > /app/logs/bridge.log 2>&1 &
         BRIDGE_PID=$!
         cd /app
         sleep 10

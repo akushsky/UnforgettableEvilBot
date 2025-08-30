@@ -69,7 +69,7 @@ class TestWhatsAppService:
         assert result
         assert self.service.bridge_process == mock_process
         mock_popen.assert_called_once_with(
-            ["node", "persistent_bridge.js"],
+            ["node", "bridge.js"],
             cwd="/test/bridge/path",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

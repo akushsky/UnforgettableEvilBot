@@ -116,6 +116,7 @@ class MessageAnalyzer(BaseService):
     async def analyze_importance(self, message: str, chat_context: str = "") -> int:
         """Analyze message importance"""
         if not await self.validate_input(message):
+            logger.warning("Invalid input for importance analysis")
             return 3
 
         prompt = self._build_importance_prompt(message, chat_context)
@@ -178,7 +179,20 @@ class MessageAnalyzer(BaseService):
     async def validate_input(self, data: Any) -> bool:
         """Validate input data for analyzer"""
         if isinstance(data, str):
-            return len(data.strip()) > 0
+            # Check if string is not empty and contains actual content
+            stripped = data.strip()
+            if len(stripped) == 0:
+                return False
+
+            # Check if string contains at least some printable characters
+            # This handles Hebrew, Arabic, and other Unicode text properly
+            import unicodedata
+
+            printable_chars = sum(
+                1 for char in stripped if unicodedata.category(char).startswith("L")
+            )
+            return printable_chars > 0
+
         elif isinstance(data, list):
             return len(data) > 0 and all(isinstance(item, dict) for item in data)
         return False

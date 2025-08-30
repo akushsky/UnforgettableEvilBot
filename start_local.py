@@ -18,6 +18,7 @@ import threading
 import time
 from pathlib import Path
 
+import httpx
 import psutil
 
 from config.settings import settings
@@ -42,8 +43,8 @@ class LocalDevelopmentServer:
                 try:
                     cmdline = " ".join(proc.info["cmdline"] or [])
 
-                    # Check for WhatsApp bridge (persistent_bridge.js)
-                    if "persistent_bridge.js" in cmdline or (
+                    # Check for WhatsApp bridge (bridge.js)
+                    if "bridge.js" in cmdline or (
                         "node" in cmdline and "bridge" in cmdline
                     ):
                         existing_processes["bridge"].append(proc)
@@ -222,8 +223,6 @@ class LocalDevelopmentServer:
         """Check if a service is healthy"""
         for i in range(max_attempts):
             try:
-                import httpx
-
                 # Use httpx instead of urllib for better security
                 with httpx.Client(timeout=5.0) as client:
                     response = client.get(url)
@@ -350,20 +349,14 @@ class LocalDevelopmentServer:
         """Start WhatsApp bridge"""
         self.log("🌉 Starting WhatsApp Bridge...")
         process = self.run_command(
-            ["node", "persistent_bridge.js"],
+            ["node", "bridge.js"],
             "bridge",
             "logs/bridge.log",
             cwd=str(Path("whatsapp_bridge")),
         )
 
         if process:
-            self.log("⏳ Waiting for WhatsApp Bridge to be ready...")
-            if self.check_health(f"{settings.WHATSAPP_BRIDGE_URL}/health"):
-                self.log("✅ WhatsApp Bridge is ready!")
-                return True
-            else:
-                self.log("❌ WhatsApp Bridge failed to start. Check logs/bridge.log")
-                return False
+            return True
         return False
 
     def start_api(self):
@@ -376,23 +369,12 @@ class LocalDevelopmentServer:
         )
 
         if process:
-            self.log("⏳ Waiting for FastAPI to be ready...")
-            # Use /health as readiness probe
-            if self.check_health(f"http://127.0.0.1:{settings.PORT}/health"):
-                self.log("✅ FastAPI is ready!")
-                return True
-            else:
-                self.log(
-                    "❌ FastAPI failed to become ready (health). Check logs/api.log"
-                )
-                return False
+            return True
         return False
 
     def restore_connections(self):
         """Restore WhatsApp connections"""
         try:
-            import httpx
-
             # Use httpx instead of urllib for better security
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(
@@ -467,14 +449,54 @@ class LocalDevelopmentServer:
         if not self.install_node_dependencies():
             sys.exit(1)
 
-        # Start services
+        # Start services sequentially with health checks
         if not self.start_bridge():
             sys.exit(1)
 
-        self.restore_connections()
+        # Wait for bridge to be ready (up to 60 seconds)
+        self.log("⏳ Waiting for WhatsApp Bridge to be ready...")
+        for i in range(30):
+            try:
+                response = httpx.get(
+                    f"{settings.WHATSAPP_BRIDGE_URL}/health", timeout=5.0
+                )
+                if response.status_code == 200:
+                    self.log("✅ WhatsApp Bridge is ready!")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+            if i == 29:
+                self.log("❌ WhatsApp Bridge failed to start")
+                sys.exit(1)
 
         if not self.start_api():
             sys.exit(1)
+
+        # Wait for API to be ready (up to 60 seconds)
+        self.log("⏳ Waiting for FastAPI to be ready...")
+        for i in range(30):
+            try:
+                response = httpx.get(
+                    f"http://localhost:{settings.PORT}/health", timeout=5.0
+                )
+                if response.status_code == 200:
+                    self.log("✅ FastAPI is ready!")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+            if i == 29:
+                self.log("❌ FastAPI failed to start")
+                sys.exit(1)
+
+        # Wait additional time for full initialization (like Docker)
+        self.log("🔄 Waiting for services to fully initialize...")
+        time.sleep(5)
+
+        # Now restore connections after both services are confirmed ready
+        self.restore_connections()
+        self.log("")
 
         # Show status
         self.log("🎉 All services are running!")
@@ -542,8 +564,8 @@ This script will:
 - Check database connection
 - Run migrations
 - Install Node.js dependencies
-- Start WhatsApp Bridge on port 3000
-        - Start FastAPI on port {settings.PORT}
+- Start WhatsApp Bridge (Baileys) on port 3000
+- Start FastAPI on port {settings.PORT}
 - Monitor and restart failed services
         """
         )

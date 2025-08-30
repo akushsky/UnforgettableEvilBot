@@ -97,7 +97,7 @@ A sophisticated WhatsApp chat monitoring system that uses AI to analyze messages
    uvicorn main:app --reload --host 0.0.0.0 --port 9876
    # Terminal 2: Start WhatsApp bridge
    cd whatsapp_bridge
-   node persistent_bridge.js
+   node bridge.js
    ```
 ## ⚙️ Configuration
 ### Required Environment Variables

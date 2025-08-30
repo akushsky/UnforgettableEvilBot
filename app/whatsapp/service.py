@@ -45,7 +45,7 @@ class WhatsAppService:
             )
 
             self.bridge_process = subprocess.Popen(
-                ["node", "persistent_bridge.js"],
+                ["node", "bridge.js"],
                 cwd=bridge_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

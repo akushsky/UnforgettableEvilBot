@@ -53,7 +53,7 @@ Local sessions (files)
 
 ## 🔧 Enhanced Architecture for Production
 
-### 1. Persistent WhatsApp Bridge (`persistent_bridge.js`)
+### 1. WhatsApp Bridge (`bridge.js`)
 ```javascript
 class PersistentWhatsAppBridge {
     constructor() {

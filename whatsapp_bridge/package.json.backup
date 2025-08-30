@@ -1,11 +1,11 @@
 {
-  "name": "whatsapp-bridge",
+  "name": "whatsapp-bridge-baileys",
   "version": "1.0.0",
-  "description": "WhatsApp bridge for Python backend using Baileys",
-  "main": "bridge.js",
+  "description": "WhatsApp Baileys bridge for Python backend",
+  "main": "baileys_bridge.js",
   "scripts": {
-    "start": "node bridge.js",
-    "dev": "nodemon bridge.js"
+    "start": "node baileys_bridge.js",
+    "dev": "nodemon baileys_bridge.js"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

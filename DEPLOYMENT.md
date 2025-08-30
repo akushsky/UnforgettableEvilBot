@@ -165,7 +165,7 @@ uvicorn main:app --host 0.0.0.0 --port 9876 --reload
 ```bash
 cd whatsapp_bridge
 npm install
-node persistent_bridge.js
+node bridge.js
 ```
 
 ---

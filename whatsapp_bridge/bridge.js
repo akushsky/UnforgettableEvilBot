@@ -1,5 +1,13 @@
 /* eslint-disable no-console */
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  jidDecode,
+  proto
+} = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
@@ -7,28 +15,30 @@ const fs = require('fs').promises;
 const fssync = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { Boom } = require('@hapi/boom');
+const pino = require('pino');
 
 const INIT_TIMEOUT_MS = parseInt(process.env.INIT_TIMEOUT_MS || '45000', 10);
-const MAX_INIT_RETRIES = parseInt(process.env.MAX_INIT_RETRIES || '2', 10); // total tries incl. first
-const RESTORE_DELAY_MS = parseInt(process.env.RESTORE_DELAY_MS || '3000', 10);
+const MAX_INIT_RETRIES = parseInt(process.env.MAX_INIT_RETRIES || '2', 10);
+const RESTORE_DELAY_MS = parseInt(process.env.RESTORE_DELAY_MS || '8000', 10);
 
-class PersistentWhatsAppBridge {
+class BaileysWhatsAppBridge {
   constructor() {
-    this.clients = new Map();           // userId -> Client
+    this.clients = new Map();           // userId -> WASocket
     this.clientStates = new Map();      // userId -> state info
     this.qrCodes = new Map();           // userId -> qr string
     this.reconnectTimeouts = new Map(); // userId -> timeout
     this.initializing = new Map();      // userId -> Promise
     this.restorePromise = null;         // de-dupe restore-all
     this.restoreScheduled = false;
+    this.persistentChats = new Map();   // userId -> cached chats (survives reconnections)
 
     this.app = express();
     this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:9876';
 
     this.stateFile = './client_states.json';
-    // Use environment variable for session path, fallback to local sessions
     this.sessionsRoot = process.env.WHATSAPP_SESSION_PATH || path.resolve('./sessions');
-    console.log(`WhatsApp Bridge sessions root: ${this.sessionsRoot}`);
+    console.log(`Baileys WhatsApp Bridge sessions root: ${this.sessionsRoot}`);
     if (!fssync.existsSync(this.sessionsRoot)) {
       console.log(`Creating sessions directory: ${this.sessionsRoot}`);
       fssync.mkdirSync(this.sessionsRoot, { recursive: true });
@@ -39,8 +49,6 @@ class PersistentWhatsAppBridge {
     console.log('- Node.js version:', process.version);
     console.log('- Platform:', process.platform);
     console.log('- Architecture:', process.arch);
-    console.log('- Puppeteer executable path:', process.env.PUPPETEER_EXECUTABLE_PATH || 'default');
-    console.log('- Chrome executable path:', process.env.CHROME_EXECUTABLE_PATH || 'default');
 
     this.setupExpress();
     this.loadPersistedStates().catch(() => {});
@@ -58,7 +66,9 @@ class PersistentWhatsAppBridge {
       for (const [userId, client] of this.clients) {
         const state = this.clientStates.get(userId) || {};
         let liveState = null;
-        try { liveState = await client.getState(); } catch (_) {}
+        try {
+          liveState = client.user ? 'CONNECTED' : 'DISCONNECTED';
+        } catch (_) {}
         clientInfo[userId] = {
           connected: liveState === 'CONNECTED',
           liveState,
@@ -189,8 +199,10 @@ class PersistentWhatsAppBridge {
       const snap = this.clientStates.get(userId) || {};
       let info = null, liveState = null, connected = false;
       if (client) {
-        info = client.info || null;
-        try { liveState = await client.getState(); } catch (_) {}
+        info = client.user ? { id: client.user.id, name: client.user.name } : null;
+        try {
+          liveState = client.user ? 'CONNECTED' : 'DISCONNECTED';
+        } catch (_) {}
         connected = liveState === 'CONNECTED';
       }
 
@@ -245,6 +257,8 @@ class PersistentWhatsAppBridge {
         res.status(500).json({ error: error.message });
       }
     });
+
+
   }
 
   /* ----------------------------- Utilities ----------------------------- */
@@ -281,14 +295,21 @@ class PersistentWhatsAppBridge {
       default: return server || 'unknown';
     }
   }
-  inferIsGroupFromWid(wid) { return this.inferChatKindFromWid(wid) === 'group'; }
+
+  inferIsGroupFromWid(wid) {
+    return this.inferChatKindFromWid(wid) === 'group';
+  }
 
   /* ----------------------- Lifecycle / initialization ----------------------- */
 
   async ensureClientStarted(userId) {
     if (this.clients.get(userId) || this.initializing.has(userId)) return;
-    try { await this.initializeClientWithReconnect(userId, { preferExistingSession: true }); }
-    catch (e) { console.error(`ensureClientStarted failed for ${userId}:`, e.message); }
+    try {
+      await this.initializeClientWithReconnect(userId, { preferExistingSession: true });
+    }
+    catch (e) {
+      console.error(`ensureClientStarted failed for ${userId}:`, e.message);
+    }
   }
 
   async initializeClientWithReconnect(userId, { preferExistingSession = true } = {}) {
@@ -300,77 +321,112 @@ class PersistentWhatsAppBridge {
     const run = (async () => {
       const existing = this.clients.get(userId);
       if (existing) {
-        try { if ((await existing.getState()) === 'CONNECTED') {
-          return { message: 'Client already connected', userId, connected: true };
-        }} catch (_) {}
+        try {
+          if (existing.user) {
+            return { message: 'Client already connected', userId, connected: true };
+          }
+        } catch (_) {}
       }
 
       const hasSession = preferExistingSession ? await this.checkSessionExists(userId) : false;
-      console.log(`Initializing WA client for ${userId} (hasSession=${hasSession})`);
+      console.log(`Initializing Baileys client for ${userId} (hasSession=${hasSession})`);
 
       let lastError = null;
       for (let attempt = 1; attempt <= Math.max(1, MAX_INIT_RETRIES); attempt++) {
-        const client = new Client({
-          authStrategy: new LocalAuth({
-            clientId: userId,              // folder: sessions/session-<userId>
-            dataPath: this.sessionsRoot,
-          }),
-          puppeteer: {
-            headless: true,
-            args: [
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-gpu',
-              '--disable-web-security',
-              '--disable-features=VizDisplayCompositor',
-              '--disable-background-timer-throttling',
-              '--disable-backgrounding-occluded-windows',
-              '--disable-renderer-backgrounding',
-              '--disable-field-trial-config',
-              '--disable-ipc-flooding-protection',
-              '--enable-logging',
-              '--log-level=0',
-              '--v=1',
-            ],
-            timeout: 60000,
-            protocolTimeout: 60000,
-          },
-          restartOnAuthFail: true,
-          takeoverOnConflict: true,
-          takeoverTimeoutMs: 30000,
-          webVersionCache: {
-            type: 'local',
-            path: path.join(this.sessionsRoot, 'web-cache'),
-          },
-        });
-
-        // attach handlers once per attempt
-        await this.setupClientHandlers(client, userId);
-        this.clients.set(userId, client);
-        this.updateClientState(userId, {
-          hasSession,
-          lastInitialized: new Date().toISOString(),
-          connected: false,
-        });
-
         try {
-          await this.withTimeout(client.initialize(), INIT_TIMEOUT_MS, `client.initialize(${userId})`);
-          // if initialize resolves, we return control to events; route already returns success
+          const sessionPath = this.sessionFolderFor(userId);
+          const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+
+          const { version, isLatest } = await fetchLatestBaileysVersion();
+          console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+
+          const client = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: false,
+            auth: {
+              creds: state.creds,
+              keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
+            },
+            browser: ['WhatsApp Bridge', 'Chrome', '1.0.0'],
+            connectTimeoutMs: INIT_TIMEOUT_MS,
+            defaultQueryTimeoutMs: 60000,
+            emitOwnEvents: false,
+            generateHighQualityLinkPreview: true,
+            getMessage: async () => {
+              return {
+                conversation: 'hello'
+              }
+            }
+          });
+
+          // attach handlers once per attempt
+          await this.setupClientHandlers(client, userId, saveCreds);
+          this.clients.set(userId, client);
+          this.updateClientState(userId, {
+            hasSession,
+            lastInitialized: new Date().toISOString(),
+            connected: false,
+          });
+
+          // Wait for connection or QR
+          await this.withTimeout(
+            new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error('Connection timeout')), INIT_TIMEOUT_MS);
+
+              const onReady = () => {
+                clearTimeout(timeout);
+                resolve();
+              };
+
+              const onQR = (qr) => {
+                clearTimeout(timeout);
+                this.qrCodes.set(userId, qr);
+                resolve(); // QR is also a valid state
+              };
+
+              // Check if already connected
+              if (client.user) {
+                onReady();
+              } else {
+                // Listen for events
+                client.ev.on('connection.update', (update) => {
+                  if (update.connection === 'open') {
+                    onReady();
+                  } else if (update.qr) {
+                    onQR(update.qr);
+                  }
+                });
+              }
+            }),
+            INIT_TIMEOUT_MS,
+            `client.initialize(${userId})`
+          );
+
           return { message: 'Client initialization started', userId, hasSession };
         } catch (err) {
           lastError = err;
           console.error(`[init] attempt ${attempt} failed for ${userId}:`, err?.message || err);
-          // Hard stop this attempt's client/browser
-          try { await client.destroy(); } catch (_) {}
-          this.clients.delete(userId);
+
+          // Clean up failed client
+          const client = this.clients.get(userId);
+          if (client) {
+            try {
+              client.end();
+            } catch (_) {}
+            this.clients.delete(userId);
+          }
 
           // Optionally wipe bad session and retry clean
           const shouldWipe = process.env.WIPE_BAD_SESSIONS === '1' && hasSession;
           if (shouldWipe) {
             console.warn(`[init] wiping session for ${userId} and retrying…`);
-            try { await fs.rm(this.sessionFolderFor(userId), { recursive: true, force: true }); }
-            catch (e) { console.error(`[init] wipe failed for ${userId}:`, e?.message || e); }
+            try {
+              await fs.rm(this.sessionFolderFor(userId), { recursive: true, force: true });
+            }
+            catch (e) {
+              console.error(`[init] wipe failed for ${userId}:`, e?.message || e);
+            }
           }
 
           if (attempt < Math.max(1, MAX_INIT_RETRIES)) {
@@ -388,184 +444,95 @@ class PersistentWhatsAppBridge {
     finally { this.initializing.delete(userId); }
   }
 
-  async setupClientHandlers(client, userId) {
-    client.on('qr', (qr) => {
-      console.log(`QR for ${userId}`);
-      this.qrCodes.set(userId, qr);
+  async setupClientHandlers(client, userId, saveCreds) {
+    client.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log(`QR for ${userId}`);
+        this.qrCodes.set(userId, qr);
+      }
+
+      if (connection === 'open') {
+        console.log(`connected ${userId}`);
+        this.updateClientState(userId, {
+          connected: true,
+          lastSeen: new Date().toISOString(),
+          hasSession: true,
+        });
+
+        // Notify backend
+        axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
+          userId,
+          timestamp: new Date().toISOString(),
+          clientInfo: client.user || { connected: true },
+        }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
+
+        this.qrCodes.delete(userId);
+      }
+
+      if (connection === 'close') {
+        const shouldReconnect = (lastDisconnect?.error instanceof Boom ? lastDisconnect.error.output?.statusCode : null) !== DisconnectReason.loggedOut;
+        console.log(`connection closed for ${userId} due to ${lastDisconnect?.error}, reconnecting: ${shouldReconnect}`);
+
+        this.updateClientState(userId, {
+          connected: false,
+          lastDisconnected: new Date().toISOString(),
+          disconnectReason: lastDisconnect?.error?.message || 'unknown',
+        });
+
+        if (shouldReconnect) {
+          const old = this.reconnectTimeouts.get(userId);
+          if (old) clearTimeout(old);
+          const t = setTimeout(() => this.attemptReconnect(userId), 30000);
+          this.reconnectTimeouts.set(userId, t);
+        }
+      }
     });
 
-    client.on('loading_screen', (p, m) => console.log(`load ${userId}: ${p}% - ${m}`));
-    client.on('change_state', (s) => console.log(`state ${userId}: ${s}`));
+    client.ev.on('creds.update', saveCreds);
 
-    // Add Puppeteer debugging
-    client.on('puppeteer_page_created', (page) => {
-      console.log(`Puppeteer page created for ${userId}`);
-      page.on('console', (msg) => {
-        if (msg.type() === 'error') {
-          console.log(`Page error for ${userId}:`, msg.text());
-        }
-      });
-      page.on('pageerror', (error) => {
-        console.log(`Page error for ${userId}:`, error.message);
-      });
-    });
-
-    client.on('authenticated', () => {
-      console.log(`authenticated ${userId}`);
-      this.updateClientState(userId, { authFailure: false, hasSession: true });
-
-            // Set up message handling even if ready event doesn't fire
-      setTimeout(async () => {
-        const state = this.clientStates.get(userId) || {};
-        if (!state.connected) {
-          console.log(`Setting up message handling for ${userId} after authentication`);
-          this.updateClientState(userId, {
-            connected: true,
-            lastSeen: new Date().toISOString(),
-            hasSession: true,
-          });
-
-          // Force ensure web is loaded and notify backend
-          try {
-            const client = this.clients.get(userId);
-            if (client) {
-              await this.ensureWebLoaded(client);
-              console.log(`Web interface loaded for ${userId}`);
-
-              // Notify backend that client is connected
-              axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
-                userId,
-                timestamp: new Date().toISOString(),
-                clientInfo: client.info || { connected: true },
-              }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
-
-              // Test if client can receive messages by checking its state
-              try {
-                const state = await client.getState();
-                console.log(`Client ${userId} state after setup: ${state}`);
-
-                // Try to get chats to verify client is working
-                const chats = await client.getChats();
-                console.log(`Client ${userId} has ${chats.length} chats available`);
-              } catch (e) {
-                console.log(`Client ${userId} test failed:`, e.message);
-              }
-            }
-          } catch (e) {
-            console.log(`Force web load failed for ${userId}:`, e.message);
-          }
-        }
-      }, 3000);
-
-      // Additional fallback: check if client is ready after a longer delay
-      setTimeout(async () => {
-        const state = this.clientStates.get(userId) || {};
-        const client = this.clients.get(userId);
-        if (client && !state.connected) {
-          try {
-            const st = await client.getState();
-            if (st === 'CONNECTED') {
-              console.log(`Force setting client ${userId} as ready after delay`);
-              this.updateClientState(userId, {
-                connected: true,
-                lastSeen: new Date().toISOString(),
-                hasSession: true,
-              });
-
-              // Force trigger ready-like behavior
-              try {
-                await this.ensureWebLoaded(client);
-                console.log(`Web interface loaded for ${userId} (delayed)`);
-
-                // Notify backend
-                axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
-                  userId,
-                  timestamp: new Date().toISOString(),
-                  clientInfo: { connected: true, forced: true },
-                }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
-              } catch (e) {
-                console.log(`Delayed web load failed for ${userId}:`, e.message);
-              }
-            }
-          } catch (e) {
-            console.log(`State check failed for ${userId}:`, e.message);
-          }
-        }
-      }, 10000);
-    });
-
-    client.on('ready', async () => {
-      console.log(`ready ${userId}`);
-      this.updateClientState(userId, {
-        connected: true,
-        lastSeen: new Date().toISOString(),
-        hasSession: true,
-      });
-
-      setTimeout(async () => {
+    client.ev.on('messages.upsert', async (m) => {
+      const msg = m.messages[0];
+      if (!msg.key.fromMe && msg.message) {
+        console.log(`MESSAGE for ${userId}: ${msg.message.conversation?.substring(0, 50) || 'media'}...`);
         try {
-          await this.ensureWebLoaded(client);
-          await client.getChats().catch(() => {});
-        } catch (e) {
-          console.log(`warmup getChats failed ${userId}: ${e.message}`);
+          await this.handleIncomingMessage(userId, msg);
         }
-      }, 400);
-
-      axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
-        userId,
-        timestamp: new Date().toISOString(),
-        clientInfo: client.info,
-      }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
-
-      this.qrCodes.delete(userId);
-    });
-
-    client.on('message_create', async (message) => {
-      console.log(`MESSAGE_CREATE for ${userId}: ${message.body?.substring(0, 50)}...`);
-      console.log(`Message details: from=${message.from}, to=${message.to}, type=${message.type}`);
-      try { await this.handleIncomingMessage(userId, message); }
-      catch (e) { console.error(`handle msg ${userId}:`, e); }
-    });
-
-    // Add additional message event handlers for debugging
-    client.on('message', async (message) => {
-      console.log(`Message event for ${userId}: ${message.body?.substring(0, 50)}...`);
-    });
-
-    client.on('message_revoke_everyone', async (message) => {
-      console.log(`Message revoked for ${userId}: ${message.body?.substring(0, 50)}...`);
-    });
-
-    client.on('message_ack', (msg, ack) => {
-      console.log(`Message ACK for ${userId}: ack=${ack}`);
-    });
-
-    client.on('disconnected', (reason) => {
-      console.log(`disconnected ${userId}: ${reason}`);
-      this.updateClientState(userId, {
-        connected: false,
-        lastDisconnected: new Date().toISOString(),
-        disconnectReason: reason,
-      });
-      const old = this.reconnectTimeouts.get(userId);
-      if (old) clearTimeout(old);
-      const t = setTimeout(() => this.attemptReconnect(userId), 30000);
-      this.reconnectTimeouts.set(userId, t);
-    });
-
-    client.on('auth_failure', async (msg) => {
-      console.error(`auth_failure ${userId}: ${msg}`);
-      this.updateClientState(userId, {
-        authFailure: true,
-        lastAuthFailure: new Date().toISOString(),
-        connected: false,
-      });
-      if (process.env.WIPE_BAD_SESSIONS === '1') {
-        try {
-          await this.cleanupClient(userId);
-        } catch (e) {
-          console.error(`auto-wipe failed ${userId}:`, e.message);
+        catch (e) {
+          console.error(`handle msg ${userId}:`, e);
         }
+      }
+    });
+
+    client.ev.on('messages.update', async (updates) => {
+      for (const update of updates) {
+        if (update.update.status) {
+          console.log(`Message status update for ${userId}: ${update.update.status}`);
+        }
+      }
+    });
+
+    client.ev.on('messaging-history.set', ({ chats: newChats, contacts: newContacts, messages: newMessages, syncType }) => {
+      console.log(`Messaging history set for ${userId}:`, {
+        chatsCount: newChats ? newChats.length : 0,
+        contactsCount: newContacts ? newContacts.length : 0,
+        messagesCount: newMessages ? newMessages.length : 0,
+        syncType
+      });
+
+      // Store chats persistently so they survive reconnections
+      if (newChats && newChats.length > 0) {
+        const processedChats = newChats.map(chat => ({
+          id: chat.id,
+          name: chat.name || chat.subject || chat.id.split('@')[0] || 'Unknown',
+          isGroup: this.inferIsGroupFromWid(chat.id) || chat.id.endsWith('@g.us'),
+          participants: chat.participants ? Object.keys(chat.participants).length : 0,
+          lastMessage: null,
+        }));
+
+        this.persistentChats.set(userId, processedChats);
+        console.log(`Persistently stored ${processedChats.length} chats for user ${userId}`);
       }
     });
   }
@@ -573,14 +540,14 @@ class PersistentWhatsAppBridge {
   async attemptReconnect(userId) {
     const client = this.clients.get(userId);
     if (!client) return;
+
     try {
-      const st = await client.getState();
-      if (st === 'CONNECTED') return;
+      if (client.user) return; // Already connected
     } catch (_) {}
 
     console.log(`reconnect ${userId}`);
     try {
-      await this.withTimeout(client.initialize(), INIT_TIMEOUT_MS, `reconnect.initialize(${userId})`);
+      await this.initializeClientWithReconnect(userId, { preferExistingSession: true });
     } catch (error) {
       console.error(`reconnect failed ${userId}:`, error?.message || error);
       const old = this.reconnectTimeouts.get(userId);
@@ -596,7 +563,9 @@ class PersistentWhatsAppBridge {
       for (const [userId, client] of this.clients) {
         const state = this.clientStates.get(userId) || {};
         let live = null;
-        try { live = await client.getState(); } catch (_) {}
+        try {
+          live = client.user ? 'CONNECTED' : 'DISCONNECTED';
+        } catch (_) {}
         const ok = live === 'CONNECTED' && state.connected === true;
         if ((state.hasSession || (await this.checkSessionExists(userId))) && !ok) {
           console.log(`health says reconnect ${userId} (live=${live})`);
@@ -609,22 +578,50 @@ class PersistentWhatsAppBridge {
   /* ----------------------------- Messages ----------------------------- */
 
   async handleIncomingMessage(userId, message) {
-    console.log(`Processing incoming message for ${userId}: ${message.body?.substring(0, 50)}...`);
-    const chat = await message.getChat();
-    const contact = await message.getContact();
+    console.log(`Processing incoming message for ${userId}: ${message.message?.conversation?.substring(0, 50) || 'media'}...`);
 
-    const importance = this.calculateMessageImportance(message);
+    const chatId = message.key.remoteJid;
+    const sender = message.key.participant || message.key.remoteJid;
+    const content = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
+    const timestamp = new Date(message.messageTimestamp * 1000).toISOString();
+
+    // Get chat info
+    let chatName = 'Unknown';
+    let chatType = 'private';
+    let participants = 0;
+
+    try {
+      const client = this.clients.get(userId);
+      if (client) {
+        if (chatId.endsWith('@g.us')) {
+          chatType = 'group';
+          const groupMetadata = await client.groupMetadata(chatId).catch(() => null);
+          if (groupMetadata) {
+            chatName = groupMetadata.subject || 'Group';
+            participants = groupMetadata.participants?.length || 0;
+          }
+        } else {
+          const contact = await client.contactsUpsert([{ id: chatId }]).catch(() => null);
+          if (contact && contact[0]) {
+            chatName = contact[0].notify || contact[0].name || contact[0].id;
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`Error getting chat info for ${userId}:`, e);
+    }
+
     const messageData = {
       userId,
-      messageId: message.id._serialized,
-      chatId: chat.id._serialized,
-      chatName: chat.name || contact.pushname || contact.number,
-      chatType: chat.isGroup ? 'group' : 'private',
-      sender: contact.pushname || contact.number,
-      content: message.body,
-      timestamp: new Date(message.timestamp * 1000).toISOString(),
-      importance,
-      hasMedia: message.hasMedia,
+      messageId: message.key.id,
+      chatId: chatId,
+      chatName: chatName,
+      chatType: chatType,
+      sender: sender,
+      content: content,
+      timestamp: timestamp,
+      importance: 1, // Default importance - AI analysis will be done on backend
+      hasMedia: !!(message.message?.imageMessage || message.message?.videoMessage || message.message?.audioMessage || message.message?.documentMessage),
     };
 
     try {
@@ -635,157 +632,52 @@ class PersistentWhatsAppBridge {
     }
   }
 
-  calculateMessageImportance(message) {
-    const content = (message.body || '').toLowerCase();
-    const urgent = ['срочно', 'важно', 'критично', 'помощь', 'проблема'];
-    const work = ['проект', 'встреча', 'дедлайн', 'задача', 'релиз'];
-    if (urgent.some((k) => content.includes(k))) return 5;
-    if (work.some((k) => content.includes(k))) return 4;
-    if ((message.body || '').length > 100) return 3;
-    return 2;
-  }
+
 
   /* -------------------- Chats / Store readiness & fetch -------------------- */
 
-  async ensureWebLoaded(client) {
-    const page = client.pupPage;
-    if (!page || typeof page.waitForFunction !== 'function') {
-      console.log('No Puppeteer page available for web loading check');
-      return;
-    }
-
-    try {
-      console.log('Waiting for WhatsApp Web interface to load...');
-      await page.waitForFunction(
-        () => {
-          const S = window?.Store;
-          const hasStore = !!(S && (S.Chat || S.Chats) && (S.Msg || S.Messages));
-          console.log('WhatsApp Web Store check:', { hasStore, storeKeys: S ? Object.keys(S) : 'no store' });
-          return hasStore;
-        },
-        { timeout: 45000 }
-      );
-      console.log('WhatsApp Web interface loaded successfully');
-    } catch (error) {
-      console.log('Failed to load WhatsApp Web interface:', error.message);
-
-      // Try to get more debugging info
-      try {
-        const pageContent = await page.content();
-        console.log('Page title:', await page.title());
-        console.log('Page URL:', page.url());
-        console.log('Page content length:', pageContent.length);
-      } catch (e) {
-        console.log('Could not get page debugging info:', e.message);
-      }
-    }
-  }
-
-  async getChatsLite(client) {
-    const page = client.pupPage;
-    if (!page) throw new Error('Puppeteer page not available');
-
-    const data = await page.evaluate(() => {
-      const S = window.Store;
-      const src =
-        (S?.Chat?.getModelsArray && S.Chat.getModelsArray()) ||
-        (S?.Chat?.models) ||
-        (S?.Chats?.models) ||
-        [];
-
-      const safeId = (id) => {
-        if (!id) return null;
-        if (id._serialized) return id._serialized;
-        if (id.user && id.server) return `${id.user}@${id.server}`;
-        return String(id);
-      };
-
-      return src.map((c) => {
-        let lastBody = null, lastTs = null;
-        try {
-          const msgs = c?.msgs?.getModels ? c.msgs.getModels() : (c?.msgs?._models || []);
-          const last = msgs && msgs.length ? msgs[msgs.length - 1] : null;
-          if (last) {
-            lastBody = last.body || null;
-            lastTs = (last.t ? last.t * 1000 : last.timestamp) || null;
-          }
-        } catch (_) {}
-
-        const wid = safeId(c?.id);
-        return {
-          _wid: wid,
-          name:
-            c?.formattedTitle ||
-            c?.name ||
-            c?.contact?.name ||
-            (c?.id && (c.id.user || c.id._serialized)) ||
-            'Unknown',
-          isGroup: !!c?.isGroup, // placeholder; fix in Node
-          participants:
-            (c?.groupMetadata?.participants && c.groupMetadata.participants.length) || 0,
-          lastMessage: lastBody ? { body: lastBody, timestamp: lastTs } : null,
-        };
-      });
-    });
-
-    return data.map((row) => ({
-      id: row._wid,
-      name: row.name,
-      isGroup: this.inferIsGroupFromWid(row._wid) || !!row.isGroup,
-      participants: row.participants,
-      lastMessage: row.lastMessage,
-    }));
-  }
-
   async getChatsSafe(client, userId, { totalTimeoutMs = 45000, liteFirst = true } = {}) {
     const work = (async () => {
-      await this.ensureWebLoaded(client);
-      const st = await client.getState().catch(() => null);
-      if (st !== 'CONNECTED') {
-        throw new Error(`Client ${userId} not fully connected (state=${st})`);
+      if (!client.user) {
+        throw new Error(`Client ${userId} not fully connected`);
       }
 
-      if (liteFirst) {
-        try {
-          const lite = await this.getChatsLite(client);
-          if (Array.isArray(lite)) return lite;
-        } catch (e) {
-          console.log(`lite chats failed ${userId}, fallback:`, e.message);
+      try {
+        // First, try to get chats from persistent cache (survives reconnections)
+        const persistentChats = this.persistentChats.get(userId);
+        if (persistentChats && persistentChats.length > 0) {
+          console.log(`Returning ${persistentChats.length} chats from persistent cache for user ${userId}`);
+          return persistentChats;
         }
-      }
 
-      // fallback: map to same shape + isGroup via wid
-      for (let i = 0; i < 2; i++) {
-        try {
-          const chats = await client.getChats();
-          if (Array.isArray(chats)) {
-            return chats.map((chat) => {
-              const wid =
-                chat?.id?._serialized ||
-                (chat?.id?.user && chat?.id?.server ? `${chat.id.user}@${chat.id.server}` : null);
-              return {
-                id: wid,
-                name: chat.name || chat.pushname || (chat.id && chat.id.user) || 'Unknown',
-                isGroup: this.inferIsGroupFromWid(wid) || !!chat.isGroup,
-                participants: chat.participants ? chat.participants.length : 0,
-                lastMessage: chat.lastMessage
-                  ? { body: chat.lastMessage.body, timestamp: chat.lastMessage.timestamp }
-                  : null,
-              };
-            });
+        // Fallback: Get chats from the store (populated by messaging-history.set event)
+        const chats = [];
+
+        if (client.store && typeof client.store.chats === 'object') {
+          const chatIds = Object.keys(client.store.chats);
+          console.log(`Found ${chatIds.length} chats in store for user ${userId}`);
+
+          for (const chatId of chatIds) {
+            const chat = client.store.chats[chatId];
+            if (chat && chatId !== 'status@broadcast') {
+              chats.push({
+                id: chatId,
+                name: chat.name || chat.subject || chatId.split('@')[0] || 'Unknown',
+                isGroup: this.inferIsGroupFromWid(chatId) || chatId.endsWith('@g.us'),
+                participants: chat.participants ? Object.keys(chat.participants).length : 0,
+                lastMessage: null,
+              });
+            }
           }
-        } catch (e) {
-          const msg = e?.message || '';
-          const wait =
-            msg.includes('Evaluation failed') ||
-            msg.includes('Target page, context or browser has been closed')
-              ? 8000
-              : 3000;
-          await new Promise((r) => setTimeout(r, wait));
-          await this.ensureWebLoaded(client).catch(() => {});
         }
+
+        console.log(`Returning ${chats.length} chats for user ${userId}`);
+        return chats;
+
+      } catch (e) {
+        console.log(`getChats failed ${userId}:`, e.message);
+        return [];
       }
-      throw new Error('getChats fallback failed');
     })();
 
     return this.withTimeout(work, totalTimeoutMs, 'getChatsSafe');
@@ -799,16 +691,20 @@ class PersistentWhatsAppBridge {
     return new Promise((resolve) => {
       const interval = setInterval(async () => {
         const internal = this.clientStates.get(userId) || {};
-        if (internal.connected === true) { clearInterval(interval); return resolve(true); }
+        if (internal.connected === true) {
+          clearInterval(interval);
+          return resolve(true);
+        }
         try {
-          const st = await client.getState();
-          // More flexible check: if state is CONNECTED, consider it ready even without client.info
-          if (st === 'CONNECTED') {
+          if (client.user) {
             clearInterval(interval);
             return resolve(true);
           }
         } catch (_) {}
-        if (Date.now() - start > timeout) { clearInterval(interval); return resolve(false); }
+        if (Date.now() - start > timeout) {
+          clearInterval(interval);
+          return resolve(false);
+        }
       }, 800);
     });
   }
@@ -874,7 +770,7 @@ class PersistentWhatsAppBridge {
         const client = this.clients.get(userId);
         if (client) {
           try {
-            await client.destroy();
+            client.end();
             this.clients.delete(userId);
             console.log(`Destroyed stale client for user ${userId}`);
           } catch (error) {
@@ -895,7 +791,7 @@ class PersistentWhatsAppBridge {
 
   async start(port = 3000) {
     this.server = this.app.listen(port, () => {
-      console.log(`Persistent WhatsApp Bridge listening on port ${port}`);
+      console.log(`Baileys WhatsApp Bridge listening on port ${port}`);
     });
 
     if (!this.restoreScheduled) {
@@ -907,12 +803,16 @@ class PersistentWhatsAppBridge {
   }
 
   async stop() {
-    console.log('Stopping WhatsApp Bridge…');
+    console.log('Stopping Baileys WhatsApp Bridge…');
     await this.saveStatesToFile();
 
     for (const [userId, client] of this.clients) {
-      try { await client.destroy(); }
-      catch (error) { console.error(`destroy ${userId} error:`, error); }
+      try {
+        client.end();
+      }
+      catch (error) {
+        console.error(`destroy ${userId} error:`, error);
+      }
     }
     this.clients.clear();
 
@@ -932,7 +832,7 @@ class PersistentWhatsAppBridge {
     try {
       if (client) {
         try {
-          await client.destroy();
+          client.end();
           console.log(`Client ${userId} destroyed successfully`);
         } catch (e) {
           console.error(`destroy fail ${userId}:`, e);
@@ -941,6 +841,7 @@ class PersistentWhatsAppBridge {
       this.clients.delete(userId);
       this.clientStates.delete(userId);
       this.qrCodes.delete(userId);
+      this.persistentChats.delete(userId); // Clear persistent chat cache
 
       // Force delete session folder
       const sessionPath = this.sessionFolderFor(userId);
@@ -989,7 +890,7 @@ class PersistentWhatsAppBridge {
 
         if (client) {
           try {
-            await client.destroy();
+            client.end();
           } catch (e) {
             console.error(`destroy fail ${userId}:`, e);
           }
@@ -997,6 +898,7 @@ class PersistentWhatsAppBridge {
         this.clients.delete(userId);
         this.clientStates.delete(userId);
         this.qrCodes.delete(userId);
+        this.persistentChats.delete(userId); // Clear persistent chat cache
 
         // Don't delete session folder - keep it for reconnection
         return {
@@ -1071,9 +973,9 @@ class PersistentWhatsAppBridge {
         let activeUserIds = [];
         let backendAvailable = false;
 
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= 5; attempt++) {
           try {
-            console.log(`Attempting to connect to backend (attempt ${attempt}/3)...`);
+            console.log(`Attempting to connect to backend (attempt ${attempt}/5)...`);
             const response = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/active-users`, {
               timeout: 10000,
               headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
@@ -1085,16 +987,17 @@ class PersistentWhatsAppBridge {
               break;
             }
           } catch (error) {
-            console.error(`Failed to get active users from backend (attempt ${attempt}/3):`, error.message);
-            if (attempt < 3) {
-              console.log(`Retrying in ${attempt * 2} seconds...`);
-              await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+            console.error(`Failed to get active users from backend (attempt ${attempt}/5):`, error.message);
+            if (attempt < 5) {
+              const delay = attempt * 3; // Longer delays: 3s, 6s, 9s, 12s
+              console.log(`Retrying in ${delay} seconds...`);
+              await new Promise(resolve => setTimeout(resolve, delay * 1000));
             }
           }
         }
 
         if (!backendAvailable) {
-          console.log('Backend unavailable after 3 attempts, proceeding with local session restoration');
+          console.log('Backend unavailable after 5 attempts, proceeding with local session restoration');
           activeUserIds = null;
         }
 
@@ -1146,7 +1049,7 @@ class PersistentWhatsAppBridge {
 }
 
 /* ------------------------------- Boot ------------------------------- */
-const bridge = new PersistentWhatsAppBridge();
+const bridge = new BaileysWhatsAppBridge();
 bridge.start(process.env.PORT || 3000);
 
 // graceful shutdown
@@ -1165,4 +1068,4 @@ if (!process.listenerCount('SIGINT')) {
   });
 }
 
-module.exports = PersistentWhatsAppBridge;
+module.exports = BaileysWhatsAppBridge;

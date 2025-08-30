@@ -98,7 +98,7 @@ def _validate_monitored_chat(
         logger.info(
             f"Chat {chat_id} ({chat_name}) is not monitored by user {user_id} - skipping message"
         )
-        raise HTTPException(status_code=200, detail="Chat is not being monitored")
+        return None
 
     return monitored_chat
 
@@ -113,7 +113,9 @@ def _check_duplicate_message(message_id: str, db: Session) -> None:
 
     if existing_message:
         logger.info(f"Message {message_id} already processed")
-        raise HTTPException(status_code=200, detail="Message already processed")
+        return True
+
+    return False
 
 
 def _parse_timestamp(timestamp: str) -> datetime:
@@ -177,18 +179,26 @@ async def receive_whatsapp_message(
             user_id, message.chatId, sanitized_chat_name, db
         )
 
+        # Skip if chat is not monitored
+        if not monitored_chat:
+            return {"status": "skipped", "message": "Chat is not being monitored"}
+
         # Check for duplicate message
-        _check_duplicate_message(message.messageId, db)
+        if _check_duplicate_message(message.messageId, db):
+            return {"status": "skipped", "message": "Message already processed"}
 
         # Parse timestamp
         timestamp = _parse_timestamp(message.timestamp)
 
-        # Save message
-        _save_message(
-            message, monitored_chat, sanitized_content, sanitized_sender, timestamp, db
+        # Add background task for AI analysis and saving
+        background_tasks.add_task(
+            analyze_and_save_message,
+            message,
+            monitored_chat.id,
+            user_id,
         )
 
-        return {"status": "success", "message": "Message received and processed"}
+        return {"status": "success", "message": "Message queued for analysis"}
 
     except HTTPException:
         raise
@@ -372,6 +382,7 @@ async def analyze_and_save_message(
             importance_score=final_importance,
             has_media=message.hasMedia,
             is_processed=False,
+            ai_analyzed=True,  # Mark as analyzed by AI
         )
 
         db.add(whatsapp_message)
