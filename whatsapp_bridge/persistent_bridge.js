@@ -593,7 +593,7 @@ class PersistentWhatsAppBridge {
     const work = (async () => {
       await this.ensureWebLoaded(client);
       const st = await client.getState().catch(() => null);
-      if (st !== 'CONNECTED' || !client.info) {
+      if (st !== 'CONNECTED') {
         throw new Error(`Client ${userId} not fully connected (state=${st})`);
       }
 
@@ -654,7 +654,11 @@ class PersistentWhatsAppBridge {
         if (internal.connected === true) { clearInterval(interval); return resolve(true); }
         try {
           const st = await client.getState();
-          if (st === 'CONNECTED' && client.info) { clearInterval(interval); return resolve(true); }
+          // More flexible check: if state is CONNECTED, consider it ready even without client.info
+          if (st === 'CONNECTED') {
+            clearInterval(interval);
+            return resolve(true);
+          }
         } catch (_) {}
         if (Date.now() - start > timeout) { clearInterval(interval); return resolve(false); }
       }, 800);
