@@ -30,7 +30,12 @@ except ImportError:
 from app.api.whatsapp_webhooks import router as whatsapp_webhooks_router
 
 # Import all components
-from app.core.alerts import alert_manager, check_system_health, get_system_alerts
+from app.core.alerts import (
+    AlertSeverity,
+    alert_manager,
+    check_system_health,
+    get_system_alerts,
+)
 from app.core.async_processor import task_processor
 from app.core.cache import cache_manager
 from app.core.metrics import metrics_collector
@@ -728,15 +733,25 @@ async def health_check():  # noqa: C901
 
         # Alert manager check
         alert_count = len(alert_manager.get_active_alerts()) if alert_manager else 0
+        critical_alert_count = (
+            len(alert_manager.get_active_alerts(AlertSeverity.CRITICAL))
+            if alert_manager
+            else 0
+        )
+
         components["alerts"] = {
             "status": "healthy" if alert_manager else "disabled",
             "active": bool(alert_manager),
             "active_alerts": alert_count,
+            "critical_alerts": critical_alert_count,
         }
 
-        if alert_count > 10:
+        # Only trigger "High number of active alerts" if there are critical alerts
+        if alert_count > 10 and critical_alert_count > 0:
             health_status = "unhealthy"
-            errors.append(f"High number of active alerts: {alert_count}")
+            errors.append(
+                f"High number of active alerts: {alert_count} (including {critical_alert_count} critical)"
+            )
 
         checks["components"] = components
 
@@ -856,9 +871,25 @@ async def health_check():  # noqa: C901
         trace_manager.complete_trace(trace_context.trace_id)
 
         # Determine final status
-        # If only non-critical issues were detected, consider status degraded
+        # Distinguish between critical failures and non-critical warnings
         if health_status == "healthy" and errors:
-            health_status = "degraded"
+            # Define non-critical warnings that should not make the system unhealthy
+            non_critical_warnings = [
+                "low success rate",  # OpenAI low success rate
+                "low cache hit ratio",  # Cache performance warning
+                "unreachable",  # External service unreachable (non-critical)
+                "unhealthy",  # External service unhealthy (non-critical)
+            ]
+
+            # Check if all errors are non-critical warnings
+            all_non_critical = all(
+                any(warning in error.lower() for warning in non_critical_warnings)
+                for error in errors
+            )
+
+            # Only change to degraded if all errors are non-critical warnings
+            if all_non_critical:
+                health_status = "degraded"
 
         response_data = {
             "status": health_status,
