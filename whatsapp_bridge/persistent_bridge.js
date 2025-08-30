@@ -438,6 +438,18 @@ class PersistentWhatsAppBridge {
                 timestamp: new Date().toISOString(),
                 clientInfo: client.info || { connected: true },
               }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
+
+              // Test if client can receive messages by checking its state
+              try {
+                const state = await client.getState();
+                console.log(`Client ${userId} state after setup: ${state}`);
+
+                // Try to get chats to verify client is working
+                const chats = await client.getChats();
+                console.log(`Client ${userId} has ${chats.length} chats available`);
+              } catch (e) {
+                console.log(`Client ${userId} test failed:`, e.message);
+              }
             }
           } catch (e) {
             console.log(`Force web load failed for ${userId}:`, e.message);
@@ -509,7 +521,8 @@ class PersistentWhatsAppBridge {
     });
 
     client.on('message_create', async (message) => {
-      console.log(`Received message for ${userId}: ${message.body?.substring(0, 50)}...`);
+      console.log(`MESSAGE_CREATE for ${userId}: ${message.body?.substring(0, 50)}...`);
+      console.log(`Message details: from=${message.from}, to=${message.to}, type=${message.type}`);
       try { await this.handleIncomingMessage(userId, message); }
       catch (e) { console.error(`handle msg ${userId}:`, e); }
     });
@@ -521,6 +534,10 @@ class PersistentWhatsAppBridge {
 
     client.on('message_revoke_everyone', async (message) => {
       console.log(`Message revoked for ${userId}: ${message.body?.substring(0, 50)}...`);
+    });
+
+    client.on('message_ack', (msg, ack) => {
+      console.log(`Message ACK for ${userId}: ack=${ack}`);
     });
 
     client.on('disconnected', (reason) => {

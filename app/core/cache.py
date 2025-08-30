@@ -9,6 +9,39 @@ import redis
 from config.logging_config import get_logger
 from config.settings import settings
 
+
+def serialize_for_cache(obj: Any) -> Any:
+    """Serialize objects for caching, handling SQLAlchemy objects"""
+    if hasattr(obj, "__dict__"):
+        # Handle SQLAlchemy objects
+        if hasattr(obj, "_sa_instance_state"):
+            # Convert SQLAlchemy object to dict
+            result = {}
+            for key, value in obj.__dict__.items():
+                if not key.startswith("_"):
+                    if hasattr(value, "isoformat"):  # datetime objects
+                        result[key] = value.isoformat()
+                    elif hasattr(value, "__dict__") and hasattr(
+                        value, "_sa_instance_state"
+                    ):
+                        # Nested SQLAlchemy object
+                        result[key] = serialize_for_cache(value)
+                    else:
+                        result[key] = value
+            return result
+        else:
+            # Regular object, convert to dict
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    elif hasattr(obj, "isoformat"):  # datetime objects
+        return obj.isoformat()
+    elif isinstance(obj, (list, tuple)):
+        return [serialize_for_cache(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: serialize_for_cache(v) for k, v in obj.items()}
+    else:
+        return obj
+
+
 logger = get_logger(__name__)
 
 
@@ -45,7 +78,9 @@ class CacheManager:
                 if value:
                     # Record cache hit
                     self._record_cache_operation("get", "redis", True)
-                    return json.loads(value)
+                    cached_value = json.loads(value)
+                    # Note: Redis values are already serialized, so we return as-is
+                    return cached_value
                 else:
                     # Record cache miss
                     self._record_cache_operation("miss", "redis", False)
@@ -74,12 +109,15 @@ class CacheManager:
     def set(self, key: str, value: Any, ttl: int = 3600) -> bool:
         """Set a value in cache"""
         try:
+            # Serialize the value for caching
+            serialized_value = serialize_for_cache(value)
+
             # Save to Redis
             if self._redis_client:
-                self._redis_client.setex(key, ttl, json.dumps(value))
+                self._redis_client.setex(key, ttl, json.dumps(serialized_value))
 
             # Save to the in-memory cache
-            self._memory_cache[key] = value
+            self._memory_cache[key] = serialized_value
             if ttl > 0:
                 self._memory_cache_ttl[key] = time.time() + ttl
 

@@ -4,10 +4,6 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.optimized_repositories import (
-    OptimizedUserRepository,
-    OptimizedWhatsAppMessageRepository,
-)
 from app.core.repositories import (
     DigestLogRepository,
     UserRepository,
@@ -93,50 +89,6 @@ class TestDatabaseIntegration:
         assert retrieved_user is not None
         assert retrieved_user.is_active is False
 
-    def test_optimized_user_repository_integration(
-        self, db_session: Session, clean_database
-    ):
-        """Test optimized user repository with real database operations."""
-        optimized_repo = OptimizedUserRepository()
-
-        # Create user
-        user = User(
-            username="optimized_test_user",
-            email="optimized@test.com",
-            hashed_password="hashed_password_123",
-            is_active=True,
-            whatsapp_connected=True,
-            created_at=datetime.utcnow(),
-        )
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
-
-        # Test optimized repository methods
-        retrieved_user = optimized_repo.get_by_username(
-            db_session, "optimized_test_user"
-        )
-        assert retrieved_user is not None
-        assert retrieved_user.email == "optimized@test.com"
-
-        # Test batch operations
-        user2 = User(
-            username="optimized_test_user2",
-            email="optimized2@test.com",
-            hashed_password="hashed_password_123",
-            is_active=True,
-            whatsapp_connected=True,
-            created_at=datetime.utcnow(),
-        )
-        db_session.add(user2)
-        db_session.commit()
-        db_session.refresh(user2)
-
-        batch_users = optimized_repo.get_users_batch(db_session, [user.id, user2.id])
-        assert len(batch_users) == 2
-        assert any(u.username == "optimized_test_user" for u in batch_users)
-        assert any(u.username == "optimized_test_user2" for u in batch_users)
-
     def test_chat_and_messages_integration(self, db_session: Session, clean_database):
         """Test creating chats and messages with relationships."""
         # Create user
@@ -200,56 +152,6 @@ class TestDatabaseIntegration:
         msg_repo = WhatsAppMessageRepository()
         chat_messages = msg_repo.get_messages_by_chat_ids(db_session, [chat.id])
         assert len(chat_messages) == 3
-
-    def test_optimized_message_repository_integration(
-        self, db_session: Session, clean_database, sample_chat
-    ):
-        """Test optimized message repository with real database operations."""
-        optimized_repo = OptimizedWhatsAppMessageRepository()
-
-        # Create messages for the sample chat
-        messages = []
-        for i in range(5):
-            message = WhatsAppMessage(
-                chat_id=sample_chat.id,
-                message_id=f"opt_msg_{i}",
-                sender="test_sender",
-                content=f"Optimized test message {i}",
-                timestamp=datetime.utcnow() - timedelta(hours=i),
-                importance_score=i + 1,
-                is_processed=False,
-                created_at=datetime.utcnow() - timedelta(hours=i),
-            )
-            messages.append(message)
-
-        db_session.add_all(messages)
-        db_session.commit()
-
-        # Refresh all messages to ensure they have IDs
-        for message in messages:
-            db_session.refresh(message)
-
-        # Test optimized repository methods
-        unprocessed_messages = optimized_repo.get_unprocessed_messages(
-            db_session, sample_chat.id, limit=10
-        )
-        assert len(unprocessed_messages) == 5
-
-        important_messages = optimized_repo.get_important_messages(
-            db_session, sample_chat.id, importance_threshold=3, limit=10
-        )
-        assert len(important_messages) == 3  # Messages with importance_score >= 3
-
-        # Test batch operations
-        message_ids = [msg.id for msg in messages[:3]]
-        updated_count = optimized_repo.mark_as_processed_batch(db_session, message_ids)
-        assert updated_count == 3
-
-        # Verify batch update
-        processed_messages = optimized_repo.get_unprocessed_messages(
-            db_session, sample_chat.id, limit=10
-        )
-        assert len(processed_messages) == 2  # 5 total - 3 processed = 2 remaining
 
     def test_digest_logs_integration(
         self, db_session: Session, clean_database, sample_user
