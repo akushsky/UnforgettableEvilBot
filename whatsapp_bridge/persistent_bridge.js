@@ -382,6 +382,19 @@ class PersistentWhatsAppBridge {
     client.on('authenticated', () => {
       console.log(`authenticated ${userId}`);
       this.updateClientState(userId, { authFailure: false, hasSession: true });
+
+      // Set up message handling even if ready event doesn't fire
+      setTimeout(() => {
+        const state = this.clientStates.get(userId) || {};
+        if (!state.connected) {
+          console.log(`Setting up message handling for ${userId} after authentication`);
+          this.updateClientState(userId, {
+            connected: true,
+            lastSeen: new Date().toISOString(),
+            hasSession: true,
+          });
+        }
+      }, 2000);
     });
 
     client.on('ready', async () => {
@@ -411,6 +424,7 @@ class PersistentWhatsAppBridge {
     });
 
     client.on('message_create', async (message) => {
+      console.log(`Received message for ${userId}: ${message.body?.substring(0, 50)}...`);
       try { await this.handleIncomingMessage(userId, message); }
       catch (e) { console.error(`handle msg ${userId}:`, e); }
     });
