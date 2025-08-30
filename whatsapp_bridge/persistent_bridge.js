@@ -105,6 +105,34 @@ class PersistentWhatsAppBridge {
       }
     });
 
+    this.app.post('/cleanup-stale-state', async (_req, res) => {
+      try {
+        console.log('Manual cleanup of stale state requested');
+
+        // Get active users from backend
+        let activeUserIds = [];
+        try {
+          const response = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/active-users`, {
+            timeout: 10000,
+            headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+          });
+          if (response.status === 200) {
+            activeUserIds = response.data.active_users.map(user => user.id.toString());
+            console.log(`Found ${activeUserIds.length} active users: ${activeUserIds.join(', ')}`);
+          }
+        } catch (error) {
+          console.error('Failed to get active users for manual cleanup:', error.message);
+          return res.status(500).json({ error: 'Failed to get active users from backend' });
+        }
+
+        await this.validateAndCleanupPersistedState(activeUserIds);
+        res.json({ message: 'Stale state cleanup completed', activeUsers: activeUserIds });
+      } catch (error) {
+        console.error('Error during manual cleanup:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     this.app.post('/disconnect/:userId', async (req, res) => {
       try {
         const userId = req.params.userId;
@@ -675,6 +703,42 @@ class PersistentWhatsAppBridge {
     } catch { return false; }
   }
 
+  async validateAndCleanupPersistedState(activeUserIds) {
+    console.log('Validating persisted state against active users...');
+
+    // Check for stale client states
+    const staleStateUsers = Array.from(this.clientStates.keys()).filter(
+      userId => !activeUserIds.includes(userId)
+    );
+
+    if (staleStateUsers.length > 0) {
+      console.log(`Found ${staleStateUsers.length} stale client states: ${staleStateUsers.join(', ')}`);
+
+      for (const userId of staleStateUsers) {
+        console.log(`Cleaning up stale client state for user ${userId}`);
+        this.clientStates.delete(userId);
+
+        // Also cleanup any existing client
+        const client = this.clients.get(userId);
+        if (client) {
+          try {
+            await client.destroy();
+            this.clients.delete(userId);
+            console.log(`Destroyed stale client for user ${userId}`);
+          } catch (error) {
+            console.error(`Failed to destroy stale client for user ${userId}:`, error.message);
+          }
+        }
+      }
+
+      // Save the cleaned state
+      await this.saveStatesToFile();
+      console.log('Persisted state cleaned and saved');
+    } else {
+      console.log('No stale client states found');
+    }
+  }
+
   /* ------------------------------- Server ------------------------------- */
 
   async start(port = 3000) {
@@ -880,6 +944,11 @@ class PersistentWhatsAppBridge {
         if (!backendAvailable) {
           console.log('Backend unavailable after 3 attempts, proceeding with local session restoration');
           activeUserIds = null;
+        }
+
+        // Validate and clean up stale persisted state
+        if (backendAvailable && activeUserIds.length > 0) {
+          await this.validateAndCleanupPersistedState(activeUserIds);
         }
 
         const diskIds = await this.listLocalSessionUserIds();
