@@ -746,9 +746,8 @@ async def health_check():  # noqa: C901
             "critical_alerts": critical_alert_count,
         }
 
-        # Only trigger "High number of active alerts" if there are critical alerts
+        # Alerts are informational only - don't affect system health status
         if alert_count > 10 and critical_alert_count > 0:
-            health_status = "unhealthy"
             errors.append(
                 f"High number of active alerts: {alert_count} (including {critical_alert_count} critical)"
             )

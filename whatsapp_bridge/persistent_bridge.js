@@ -384,7 +384,7 @@ class PersistentWhatsAppBridge {
       this.updateClientState(userId, { authFailure: false, hasSession: true });
 
       // Set up message handling even if ready event doesn't fire
-      setTimeout(() => {
+      setTimeout(async () => {
         const state = this.clientStates.get(userId) || {};
         if (!state.connected) {
           console.log(`Setting up message handling for ${userId} after authentication`);
@@ -393,8 +393,26 @@ class PersistentWhatsAppBridge {
             lastSeen: new Date().toISOString(),
             hasSession: true,
           });
+
+          // Force ensure web is loaded and notify backend
+          try {
+            const client = this.clients.get(userId);
+            if (client) {
+              await this.ensureWebLoaded(client);
+              console.log(`Web interface loaded for ${userId}`);
+
+              // Notify backend that client is connected
+              axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/connected`, {
+                userId,
+                timestamp: new Date().toISOString(),
+                clientInfo: client.info || { connected: true },
+              }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
+            }
+          } catch (e) {
+            console.log(`Force web load failed for ${userId}:`, e.message);
+          }
         }
-      }, 2000);
+      }, 3000);
     });
 
     client.on('ready', async () => {
@@ -498,6 +516,7 @@ class PersistentWhatsAppBridge {
   /* ----------------------------- Messages ----------------------------- */
 
   async handleIncomingMessage(userId, message) {
+    console.log(`Processing incoming message for ${userId}: ${message.body?.substring(0, 50)}...`);
     const chat = await message.getChat();
     const contact = await message.getContact();
 
