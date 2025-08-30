@@ -28,24 +28,9 @@ This guide will help you deploy the WhatsApp Digest System to Coolify, a modern 
 - Memory and CPU constraints
 - Proper volume management
 
-## 🎯 Deployment Steps
+## 🎯 Quick Deployment Steps
 
-### 1. **Prepare Your Repository**
-
-Ensure your repository is ready:
-```bash
-# Clone your repository
-git clone <your-repo-url>
-cd UnforgettableEvilBot
-
-# Verify Dockerfile exists
-ls Dockerfile
-
-# Verify docker-compose.coolify.yml exists
-ls docker-compose.coolify.yml
-```
-
-### 2. **Coolify Setup**
+### 1. **Coolify Setup**
 
 1. **Access Coolify Dashboard**
    - Navigate to your Coolify instance
@@ -62,49 +47,25 @@ ls docker-compose.coolify.yml
    - **Docker Compose**: Use `docker-compose.coolify.yml`
    - **Port**: `9876` (FastAPI)
 
-### 3. **Environment Variables**
+### 2. **Required Environment Variables**
 
-Set these required environment variables in Coolify:
+Set these **required** environment variables in Coolify:
 
-#### **Required API Keys**
 ```bash
+# Database - Coolify will provide these if you use their database service
+DATABASE_URL=postgresql://user:password@host:port/database
+REDIS_URL=redis://host:port/0
+
+# Required API keys
 OPENAI_API_KEY=your-openai-api-key-here
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 SECRET_KEY=your-super-secret-key-here
 ADMIN_PASSWORD=your-secure-admin-password-here
 ```
 
-#### **Database Configuration**
-```bash
-# Coolify will provide these if you use their database service
-DATABASE_URL=postgresql://user:password@host:port/database
-REDIS_URL=redis://host:port/0
-```
+### 3. **Database Setup**
 
-#### **Optional Settings**
-```bash
-# Performance tuning
-MAX_WORKERS=10
-MAX_PROCESS_WORKERS=4
-DB_POOL_SIZE=20
-DB_MAX_OVERFLOW=30
-
-# Cleanup settings
-CLEANUP_OLD_MESSAGES_DAYS=30
-CLEANUP_OLD_SYSTEM_LOGS_DAYS=7
-
-# OpenAI settings
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_MAX_TOKENS=1000
-OPENAI_TEMPERATURE=0.3
-
-# Repository optimization
-USE_OPTIMIZED_REPOSITORIES=true
-```
-
-### 4. **Database Setup**
-
-#### **Option A: Use Coolify Database Service**
+#### **Option A: Use Coolify Database Service (Recommended)**
 1. Create PostgreSQL database in Coolify
 2. Create Redis instance in Coolify
 3. Coolify will automatically provide `DATABASE_URL` and `REDIS_URL`
@@ -113,7 +74,7 @@ USE_OPTIMIZED_REPOSITORIES=true
 1. Use your own PostgreSQL/Redis instances
 2. Manually set `DATABASE_URL` and `REDIS_URL` environment variables
 
-### 5. **Deploy**
+### 4. **Deploy**
 
 1. **Build and Deploy**
    - Click "Deploy" in Coolify
@@ -128,9 +89,9 @@ USE_OPTIMIZED_REPOSITORIES=true
 ## 🔧 Configuration Details
 
 ### **Resource Limits**
-The system is configured with reasonable limits:
-- **Memory**: 2GB max, 512MB reserved
-- **CPU**: 1 core max, 0.5 core reserved
+The system is configured with optimized limits:
+- **Memory**: 1.5GB max, 512MB reserved
+- **CPU**: 0.8 core max, 0.3 core reserved
 - **Storage**: Persistent volumes for sessions and logs
 
 ### **Health Checks**
@@ -198,7 +159,7 @@ The system is configured with reasonable limits:
    ```bash
    # Check bridge logs
    # Verify Node.js dependencies
-   # Check Chrome installation
+   # Check Baileys installation
    ```
 
 ### **Logs and Debugging**
@@ -232,25 +193,17 @@ The system is configured with reasonable limits:
 ### **For High Traffic**
 ```bash
 # Increase worker processes
-MAX_WORKERS=20
-MAX_PROCESS_WORKERS=8
-
-# Optimize database
-DB_POOL_SIZE=40
-DB_MAX_OVERFLOW=60
-
-# Enable caching
-USE_OPTIMIZED_REPOSITORIES=true
-REDIS_ENABLED=true
+MAX_WORKERS=15
+DB_POOL_SIZE=25
+DB_MAX_OVERFLOW=40
 ```
 
 ### **For Low Traffic**
 ```bash
 # Reduce resource usage
-MAX_WORKERS=5
-MAX_PROCESS_WORKERS=2
-DB_POOL_SIZE=10
-DB_MAX_OVERFLOW=20
+MAX_WORKERS=4
+DB_POOL_SIZE=8
+DB_MAX_OVERFLOW=15
 ```
 
 ## 📞 Support
