@@ -5,6 +5,7 @@ const {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  makeInMemoryStore,
   jidDecode,
   proto
 } = require('@whiskeysockets/baileys');
@@ -32,6 +33,8 @@ class BaileysWhatsAppBridge {
     this.restorePromise = null;         // de-dupe restore-all
     this.restoreScheduled = false;
     this.persistentChats = new Map();   // userId -> cached chats (survives reconnections)
+    this.stores = new Map();            // userId -> in-memory store bound to events
+    this.storePersistIntervals = new Map(); // userId -> interval handle
 
     this.app = express();
     this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:9876';
@@ -274,6 +277,10 @@ class BaileysWhatsAppBridge {
     return path.join(this.sessionsRoot, `session-${userId}`);
   }
 
+  chatCacheFileFor(userId) {
+    return path.join(this.sessionFolderFor(userId), 'chats.json');
+  }
+
   async listLocalSessionUserIds() {
     const dirs = await fs.readdir(this.sessionsRoot).catch(() => []);
     const ids = [];
@@ -298,6 +305,69 @@ class BaileysWhatsAppBridge {
 
   inferIsGroupFromWid(wid) {
     return this.inferChatKindFromWid(wid) === 'group';
+  }
+
+  normalizeChat(chatId, source = {}) {
+    if (!chatId) return null;
+    const isGroup = this.inferIsGroupFromWid(chatId) || String(chatId).endsWith('@g.us');
+    const name = source.name || source.subject || source.pushName || (typeof chatId === 'string' ? chatId.split('@')[0] : 'Unknown') || 'Unknown';
+    let participants = 0;
+    if (Array.isArray(source.participants)) participants = source.participants.length;
+    else if (source.size) participants = source.size;
+    else if (source.participants && typeof source.participants === 'object') participants = Object.keys(source.participants).length;
+
+    return {
+      id: chatId,
+      name,
+      isGroup,
+      participants,
+      lastMessage: null,
+    };
+  }
+
+  mergeChats(existingList, incomingList) {
+    const byId = new Map();
+    for (const c of existingList) byId.set(c.id, c);
+    for (const c of incomingList) {
+      if (!c || !c.id) continue;
+      const prev = byId.get(c.id);
+      if (!prev) byId.set(c.id, c);
+      else {
+        byId.set(c.id, {
+          ...prev,
+          ...c,
+          name: c.name && c.name !== 'Unknown' ? c.name : prev.name,
+          participants: typeof c.participants === 'number' && c.participants > 0 ? c.participants : prev.participants,
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }
+
+  async savePersistentChats(userId) {
+    try {
+      const file = this.chatCacheFileFor(userId);
+      const folder = this.sessionFolderFor(userId);
+      if (!fssync.existsSync(folder)) fssync.mkdirSync(folder, { recursive: true });
+      const data = this.persistentChats.get(userId) || [];
+      await fs.writeFile(file, JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error(`savePersistentChats failed ${userId}:`, e?.message || e);
+    }
+  }
+
+  async loadPersistentChats(userId) {
+    try {
+      const file = this.chatCacheFileFor(userId);
+      const raw = await fs.readFile(file, 'utf8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data) && data.length) {
+        this.persistentChats.set(userId, data);
+        console.log(`Loaded ${data.length} cached chats for ${userId}`);
+        return data;
+      }
+    } catch (_) {}
+    return [];
   }
 
   /* ----------------------- Lifecycle / initialization ----------------------- */
@@ -361,7 +431,7 @@ class BaileysWhatsAppBridge {
           });
 
           // attach handlers once per attempt
-          await this.setupClientHandlers(client, userId, saveCreds);
+          await this.setupClientHandlers(client, userId, saveCreds, sessionPath);
           this.clients.set(userId, client);
           this.updateClientState(userId, {
             hasSession,
@@ -444,7 +514,34 @@ class BaileysWhatsAppBridge {
     finally { this.initializing.delete(userId); }
   }
 
-  async setupClientHandlers(client, userId, saveCreds) {
+  async setupClientHandlers(client, userId, saveCreds, sessionPath) {
+    // Prepare in-memory store and bind to client events for reliable chat/contact sync
+    let store = this.stores.get(userId);
+    if (!store) {
+      store = makeInMemoryStore({ logger: pino({ level: 'fatal' }) });
+      this.stores.set(userId, store);
+      // Load any previously persisted store snapshot
+      try {
+        const storeFile = path.join(sessionPath, 'store.json');
+        if (fssync.existsSync(storeFile)) {
+          store.readFromFile(storeFile);
+        }
+        // Persist periodically
+        if (!this.storePersistIntervals.get(userId)) {
+          const t = setInterval(() => {
+            try { store.writeToFile(storeFile); } catch (_) {}
+          }, 10000);
+          this.storePersistIntervals.set(userId, t);
+        }
+      } catch (e) {
+        console.error(`store load/persist setup failed ${userId}:`, e?.message || e);
+      }
+    }
+    try { store.bind(client.ev); } catch (_) {}
+
+    // Load cached chats from disk into memory cache (best-effort)
+    await this.loadPersistentChats(userId).catch(() => {});
+
     client.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
@@ -469,6 +566,25 @@ class BaileysWhatsAppBridge {
         }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
 
         this.qrCodes.delete(userId);
+
+        // Proactively refresh group list on connect; private chats will build over time
+        try {
+          const groups = await client.groupFetchAllParticipating().catch(() => null);
+          if (groups) {
+            const groupArray = Object.values(groups);
+            const processed = groupArray.map(g => ({
+              id: g.id,
+              name: g.subject || g.id.split('@')[0] || 'Group',
+              isGroup: true,
+              participants: Array.isArray(g.participants) ? g.participants.length : (g.size || 0),
+              lastMessage: null,
+            }));
+            this.persistentChats.set(userId, this.mergeChats(this.persistentChats.get(userId) || [], processed));
+            await this.savePersistentChats(userId).catch(() => {});
+          }
+        } catch (e) {
+          console.error(`group refresh failed ${userId}:`, e?.message || e);
+        }
       }
 
       if (connection === 'close') {
@@ -523,17 +639,84 @@ class BaileysWhatsAppBridge {
 
       // Store chats persistently so they survive reconnections
       if (newChats && newChats.length > 0) {
-        const processedChats = newChats.map(chat => ({
-          id: chat.id,
-          name: chat.name || chat.subject || chat.id.split('@')[0] || 'Unknown',
-          isGroup: this.inferIsGroupFromWid(chat.id) || chat.id.endsWith('@g.us'),
-          participants: chat.participants ? Object.keys(chat.participants).length : 0,
-          lastMessage: null,
-        }));
-
-        this.persistentChats.set(userId, processedChats);
-        console.log(`Persistently stored ${processedChats.length} chats for user ${userId}`);
+        const processedChats = newChats.map(chat => this.normalizeChat(chat.id || chat.jid || chat, chat));
+        const merged = this.mergeChats(this.persistentChats.get(userId) || [], processedChats);
+        this.persistentChats.set(userId, merged);
+        this.savePersistentChats(userId).catch(() => {});
+        console.log(`Persistently stored ${merged.length} chats for user ${userId}`);
       }
+    });
+
+    // Keep chat cache updated during lifecycle
+    client.ev.on('chats.set', ({ chats, isLatest }) => {
+      try {
+        const processed = (chats || []).map(c => this.normalizeChat(c.id || c.jid, c));
+        const merged = this.mergeChats(this.persistentChats.get(userId) || [], processed);
+        this.persistentChats.set(userId, merged);
+        this.savePersistentChats(userId).catch(() => {});
+        console.log(`chats.set(${isLatest}) updated cache to ${merged.length} for ${userId}`);
+      } catch (e) {
+        console.error('chats.set handler error:', e?.message || e);
+      }
+    });
+
+    client.ev.on('chats.upsert', (newChats) => {
+      try {
+        const processed = (newChats || []).map(c => this.normalizeChat(c.id || c.jid, c));
+        const merged = this.mergeChats(this.persistentChats.get(userId) || [], processed);
+        this.persistentChats.set(userId, merged);
+        this.savePersistentChats(userId).catch(() => {});
+        console.log(`chats.upsert added/merged ${processed.length} for ${userId}`);
+      } catch (e) { console.error('chats.upsert error:', e?.message || e); }
+    });
+
+    client.ev.on('chats.update', (updates) => {
+      try {
+        const current = this.persistentChats.get(userId) || [];
+        for (const upd of updates || []) {
+          const id = upd.id || upd.jid;
+          if (!id) continue;
+          const idx = current.findIndex(c => c.id === id);
+          if (idx >= 0) {
+            const existing = current[idx];
+            current[idx] = {
+              ...existing,
+              name: upd.name || upd.subject || existing.name,
+            };
+          }
+        }
+        this.persistentChats.set(userId, current);
+        this.savePersistentChats(userId).catch(() => {});
+      } catch (e) { console.error('chats.update error:', e?.message || e); }
+    });
+
+    client.ev.on('groups.update', (updates) => {
+      try {
+        const current = this.persistentChats.get(userId) || [];
+        for (const upd of updates || []) {
+          const id = upd.id;
+          if (!id) continue;
+          const idx = current.findIndex(c => c.id === id);
+          if (idx >= 0) {
+            current[idx] = { ...current[idx], name: upd.subject || current[idx].name, isGroup: true };
+          }
+        }
+        this.persistentChats.set(userId, current);
+        this.savePersistentChats(userId).catch(() => {});
+      } catch (e) { console.error('groups.update error:', e?.message || e); }
+    });
+
+    client.ev.on('group-participants.update', (ev) => {
+      try {
+        const current = this.persistentChats.get(userId) || [];
+        const idx = current.findIndex(c => c.id === ev.id);
+        if (idx >= 0) {
+          const delta = ev.action === 'add' ? (ev.participants?.length || 0) : ev.action === 'remove' ? -(ev.participants?.length || 0) : 0;
+          current[idx] = { ...current[idx], isGroup: true, participants: Math.max(0, (current[idx].participants || 0) + delta) };
+          this.persistentChats.set(userId, current);
+          this.savePersistentChats(userId).catch(() => {});
+        }
+      } catch (e) { console.error('group-participants.update error:', e?.message || e); }
     });
   }
 
@@ -601,10 +784,10 @@ class BaileysWhatsAppBridge {
             participants = groupMetadata.participants?.length || 0;
           }
         } else {
-          const contact = await client.contactsUpsert([{ id: chatId }]).catch(() => null);
-          if (contact && contact[0]) {
-            chatName = contact[0].notify || contact[0].name || contact[0].id;
-          }
+          // No contactsUpsert method exists on Baileys client. Prefer pushName or store contacts if available
+          const store = this.stores.get(userId);
+          const contactFromStore = store && store.contacts ? (store.contacts[chatId] || store.contacts[jidDecode?.(chatId)?.user]) : null;
+          chatName = message.pushName || contactFromStore?.name || contactFromStore?.notify || chatId.split('@')[0] || 'Unknown';
         }
       }
     } catch (e) {
@@ -630,6 +813,14 @@ class BaileysWhatsAppBridge {
     } catch (error) {
       console.error(`forward msg failed ${userId}:`, error);
     }
+
+    // Ensure chat exists in cache
+    try {
+      const entry = this.normalizeChat(chatId, { subject: chatName, name: chatName });
+      const merged = this.mergeChats(this.persistentChats.get(userId) || [], [entry]);
+      this.persistentChats.set(userId, merged);
+      await this.savePersistentChats(userId).catch(() => {});
+    } catch (_) {}
   }
 
 
@@ -650,24 +841,19 @@ class BaileysWhatsAppBridge {
           return persistentChats;
         }
 
-        // Fallback: Get chats from the store (populated by messaging-history.set event)
-        const chats = [];
-
-        if (client.store && typeof client.store.chats === 'object') {
-          const chatIds = Object.keys(client.store.chats);
-          console.log(`Found ${chatIds.length} chats in store for user ${userId}`);
-
-          for (const chatId of chatIds) {
-            const chat = client.store.chats[chatId];
-            if (chat && chatId !== 'status@broadcast') {
-              chats.push({
-                id: chatId,
-                name: chat.name || chat.subject || chatId.split('@')[0] || 'Unknown',
-                isGroup: this.inferIsGroupFromWid(chatId) || chatId.endsWith('@g.us'),
-                participants: chat.participants ? Object.keys(chat.participants).length : 0,
-                lastMessage: null,
-              });
+        // Fallback: Get chats from the in-memory store (bound to events)
+        const store = this.stores.get(userId);
+        let chats = [];
+        if (store && store.chats) {
+          try {
+            const all = typeof store.chats.all === 'function' ? store.chats.all() : (Array.isArray(store.chats) ? store.chats : Array.from(store.chats.values?.() || []));
+            for (const chat of all) {
+              const id = chat.id || chat.jid;
+              if (!id || id === 'status@broadcast') continue;
+              chats.push(this.normalizeChat(id, chat));
             }
+          } catch (e) {
+            console.log(`store chats read failed ${userId}:`, e.message);
           }
         }
 
@@ -842,6 +1028,12 @@ class BaileysWhatsAppBridge {
       this.clientStates.delete(userId);
       this.qrCodes.delete(userId);
       this.persistentChats.delete(userId); // Clear persistent chat cache
+      try {
+        const tStore = this.storePersistIntervals.get(userId);
+        if (tStore) clearInterval(tStore);
+        this.storePersistIntervals.delete(userId);
+      } catch (_) {}
+      this.stores.delete(userId);
 
       // Force delete session folder
       const sessionPath = this.sessionFolderFor(userId);
