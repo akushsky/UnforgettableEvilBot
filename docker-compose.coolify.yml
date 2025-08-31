@@ -25,6 +25,7 @@ services:
       - PYTHON_BACKEND_URL=http://127.0.0.1:9876
       - DEBUG=false
       - LOG_LEVEL=INFO
+      - WHATSAPP_SESSION_PATH=/app/whatsapp_sessions
 
       # Performance optimization
       - MAX_WORKERS=8
