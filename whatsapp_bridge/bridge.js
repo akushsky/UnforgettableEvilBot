@@ -1,14 +1,12 @@
 /* eslint-disable no-console */
-const {
-  default: makeWASocket,
-  DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  makeInMemoryStore,
-  jidDecode,
-  proto
-} = require('@whiskeysockets/baileys');
+// Baileys 6.7.x is ESM-only; load dynamically from CommonJS
+let __baileys = null;
+async function getBaileys() {
+  if (!__baileys) {
+    __baileys = await import('@whiskeysockets/baileys');
+  }
+  return __baileys;
+}
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
@@ -405,18 +403,19 @@ class BaileysWhatsAppBridge {
       for (let attempt = 1; attempt <= Math.max(1, MAX_INIT_RETRIES); attempt++) {
         try {
           const sessionPath = this.sessionFolderFor(userId);
-          const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+          const B = await getBaileys();
+          const { state, saveCreds } = await B.useMultiFileAuthState(sessionPath);
 
-          const { version, isLatest } = await fetchLatestBaileysVersion();
+          const { version, isLatest } = await B.fetchLatestBaileysVersion();
           console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
-          const client = makeWASocket({
+          const client = B.default({
             version,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
             auth: {
               creds: state.creds,
-              keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
+              keys: B.makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
             },
             browser: ['WhatsApp Bridge', 'Chrome', '1.0.0'],
             connectTimeoutMs: INIT_TIMEOUT_MS,
@@ -515,29 +514,7 @@ class BaileysWhatsAppBridge {
   }
 
   async setupClientHandlers(client, userId, saveCreds, sessionPath) {
-    // Prepare in-memory store and bind to client events for reliable chat/contact sync
-    let store = this.stores.get(userId);
-    if (!store) {
-      store = makeInMemoryStore({ logger: pino({ level: 'fatal' }) });
-      this.stores.set(userId, store);
-      // Load any previously persisted store snapshot
-      try {
-        const storeFile = path.join(sessionPath, 'store.json');
-        if (fssync.existsSync(storeFile)) {
-          store.readFromFile(storeFile);
-        }
-        // Persist periodically
-        if (!this.storePersistIntervals.get(userId)) {
-          const t = setInterval(() => {
-            try { store.writeToFile(storeFile); } catch (_) {}
-          }, 10000);
-          this.storePersistIntervals.set(userId, t);
-        }
-      } catch (e) {
-        console.error(`store load/persist setup failed ${userId}:`, e?.message || e);
-      }
-    }
-    try { store.bind(client.ev); } catch (_) {}
+    // Baileys 6.7.19 no longer provides makeInMemoryStore; skip store binding
 
     // Load cached chats from disk into memory cache (best-effort)
     await this.loadPersistentChats(userId).catch(() => {});
@@ -588,7 +565,8 @@ class BaileysWhatsAppBridge {
       }
 
       if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect?.error instanceof Boom ? lastDisconnect.error.output?.statusCode : null) !== DisconnectReason.loggedOut;
+        const B = await getBaileys();
+        const shouldReconnect = (lastDisconnect?.error instanceof Boom ? lastDisconnect.error.output?.statusCode : null) !== B.DisconnectReason.loggedOut;
         console.log(`connection closed for ${userId} due to ${lastDisconnect?.error}, reconnecting: ${shouldReconnect}`);
 
         this.updateClientState(userId, {
@@ -639,7 +617,7 @@ class BaileysWhatsAppBridge {
 
       // Store chats persistently so they survive reconnections
       if (newChats && newChats.length > 0) {
-        const processedChats = newChats.map(chat => this.normalizeChat(chat.id || chat.jid || chat, chat));
+        const processedChats = newChats.map(chat => this.normalizeChat(chat.id || chat.jid || chat, chat)).filter(Boolean);
         const merged = this.mergeChats(this.persistentChats.get(userId) || [], processedChats);
         this.persistentChats.set(userId, merged);
         this.savePersistentChats(userId).catch(() => {});
@@ -650,7 +628,7 @@ class BaileysWhatsAppBridge {
     // Keep chat cache updated during lifecycle
     client.ev.on('chats.set', ({ chats, isLatest }) => {
       try {
-        const processed = (chats || []).map(c => this.normalizeChat(c.id || c.jid, c));
+        const processed = (chats || []).map(c => this.normalizeChat(c.id || c.jid, c)).filter(Boolean);
         const merged = this.mergeChats(this.persistentChats.get(userId) || [], processed);
         this.persistentChats.set(userId, merged);
         this.savePersistentChats(userId).catch(() => {});
@@ -662,7 +640,7 @@ class BaileysWhatsAppBridge {
 
     client.ev.on('chats.upsert', (newChats) => {
       try {
-        const processed = (newChats || []).map(c => this.normalizeChat(c.id || c.jid, c));
+        const processed = (newChats || []).map(c => this.normalizeChat(c.id || c.jid, c)).filter(Boolean);
         const merged = this.mergeChats(this.persistentChats.get(userId) || [], processed);
         this.persistentChats.set(userId, merged);
         this.savePersistentChats(userId).catch(() => {});
@@ -786,7 +764,8 @@ class BaileysWhatsAppBridge {
         } else {
           // No contactsUpsert method exists on Baileys client. Prefer pushName or store contacts if available
           const store = this.stores.get(userId);
-          const contactFromStore = store && store.contacts ? (store.contacts[chatId] || store.contacts[jidDecode?.(chatId)?.user]) : null;
+          const B = await getBaileys();
+          const contactFromStore = store && store.contacts ? (store.contacts[chatId] || store.contacts[B.jidDecode?.(chatId)?.user]) : null;
           chatName = message.pushName || contactFromStore?.name || contactFromStore?.notify || chatId.split('@')[0] || 'Unknown';
         }
       }
@@ -846,7 +825,11 @@ class BaileysWhatsAppBridge {
         let chats = [];
         if (store && store.chats) {
           try {
-            const all = typeof store.chats.all === 'function' ? store.chats.all() : (Array.isArray(store.chats) ? store.chats : Array.from(store.chats.values?.() || []));
+            const all = typeof store.chats.all === 'function'
+              ? store.chats.all()
+              : Array.isArray(store.chats)
+                ? store.chats
+                : (typeof store.chats.values === 'function' ? Array.from(store.chats.values()) : []);
             for (const chat of all) {
               const id = chat.id || chat.jid;
               if (!id || id === 'status@broadcast') continue;
