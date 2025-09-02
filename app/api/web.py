@@ -358,6 +358,25 @@ async def remove_monitored_chat(
     return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
 
 
+@router.post("/users/{user_id}/chats/{chat_id}/rename")
+async def rename_monitored_chat(
+    user_id: int,
+    chat_id: int,
+    custom_name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Rename a monitored chat with a custom alternative name"""
+    chat = repository_factory.get_monitored_chat_repository().get_by_id(db, chat_id)
+    if not chat or chat.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    if chat:
+        chat.custom_name = custom_name.strip() if custom_name.strip() else None
+        db.commit()
+
+    return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
+
+
 @router.post("/users/{user_id}/settings")
 async def update_user_settings(
     user_id: int,

@@ -57,6 +57,7 @@ class MonitoredChat(Base):  # type: ignore[misc,valid-type]
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     chat_id = Column(String(100), nullable=False)
     chat_name = Column(String(200), nullable=False)
+    custom_name = Column(String(200), nullable=True)  # Custom Russian name for the chat
     chat_type = Column(String(20), nullable=False)  # 'group' or 'private'
     auto_added = Column(Boolean, default=False)  # New field - automatically added
 

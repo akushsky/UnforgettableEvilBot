@@ -313,6 +313,7 @@
                             <thead>
                                 <tr>
                                     <th>Название</th>
+                                    <th>Альтернативное название</th>
                                     <th>Тип</th>
                                     <th>ID чата</th>
                                     <th>Добавлен</th>
@@ -332,6 +333,25 @@
                                                 {% endif %}
                                             </div>
                                             <strong>{{ chat.chat_name }}</strong>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            {% if chat.custom_name %}
+                                                <span class="text-primary fw-bold">{{ chat.custom_name }}</span>
+                                                <button type="button" class="btn btn-sm btn-outline-primary ms-2"
+                                                        onclick="editChatName({{ chat.id }}, '{{ chat.custom_name }}')"
+                                                        title="Изменить альтернативное название">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                            {% else %}
+                                                <span class="text-muted">Не задано</span>
+                                                <button type="button" class="btn btn-sm btn-outline-success ms-2"
+                                                        onclick="editChatName({{ chat.id }}, '')"
+                                                        title="Добавить альтернативное название">
+                                                    <i class="fas fa-plus"></i>
+                                                </button>
+                                            {% endif %}
                                         </div>
                                     </td>
                                     <td>
@@ -606,6 +626,36 @@
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-paper-plane"></i> Отправить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для редактирования названия чата -->
+<div class="modal fade" id="editChatNameModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="editChatNameForm" method="post">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-edit"></i> Редактировать альтернативное название</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="custom_chat_name" class="form-label">
+                            <i class="fas fa-language"></i> Альтернативное название чата
+                        </label>
+                        <input type="text" class="form-control" id="custom_chat_name" name="custom_name"
+                               placeholder="Введите альтернативное название для чата" maxlength="200">
+                        <div class="form-text">Это название будет использоваться в Telegram сообщениях вместо оригинального</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Сохранить
                     </button>
                 </div>
             </form>
@@ -1389,6 +1439,49 @@ window.addEventListener('beforeunload', () => {
     if (qrCheckInterval) {
         clearInterval(qrCheckInterval);
     }
+});
+
+// Функция для редактирования названия чата
+function editChatName(chatId, currentName) {
+    const modal = new bootstrap.Modal(document.getElementById('editChatNameModal'));
+    const form = document.getElementById('editChatNameForm');
+    const input = document.getElementById('custom_chat_name');
+
+    // Устанавливаем текущее значение
+    input.value = currentName;
+
+    // Обновляем action формы
+    form.action = `/admin/users/{{ user.id }}/chats/${chatId}/rename`;
+
+    // Показываем модальное окно
+    modal.show();
+}
+
+// Обработчик отправки формы редактирования названия чата
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('editChatNameForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+        const chatId = this.action.split('/').pop();
+
+        fetch(this.action, {
+            method: 'POST',
+            body: formData
+        }).then(response => {
+            if (response.ok) {
+                // Закрываем модальное окно
+                bootstrap.Modal.getInstance(document.getElementById('editChatNameModal')).hide();
+                // Перезагружаем страницу для отображения изменений
+                window.location.reload();
+            } else {
+                alert('Ошибка при сохранении названия чата');
+            }
+        }).catch(error => {
+            console.error('Error:', error);
+            alert('Ошибка при сохранении названия чата');
+        });
+    });
 });
 </script>
 

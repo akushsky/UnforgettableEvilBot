@@ -86,7 +86,7 @@ def _validate_user(user_id: int, db: Session) -> User:
 
 def _validate_monitored_chat(
     user_id: int, chat_id: str, chat_name: str, db: Session
-) -> MonitoredChat:
+) -> MonitoredChat | None:
     """Validate that chat is being monitored"""
     monitored_chat = (
         repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(
@@ -103,7 +103,7 @@ def _validate_monitored_chat(
     return monitored_chat
 
 
-def _check_duplicate_message(message_id: str, db: Session) -> None:
+def _check_duplicate_message(message_id: str, db: Session) -> bool:
     """Check if message has already been processed"""
     existing_message = (
         repository_factory.get_whatsapp_message_repository().get_by_message_id(
@@ -188,14 +188,14 @@ async def receive_whatsapp_message(
             return {"status": "skipped", "message": "Message already processed"}
 
         # Parse timestamp
-        timestamp = _parse_timestamp(message.timestamp)
+        _parse_timestamp(message.timestamp)
 
         # Add background task for AI analysis and saving
         background_tasks.add_task(
             analyze_and_save_message,
             message,
-            monitored_chat.id,
-            user_id,
+            int(monitored_chat.id),
+            str(user_id),
         )
 
         return {"status": "success", "message": "Message queued for analysis"}
@@ -425,9 +425,20 @@ async def send_urgent_notification(message: WhatsAppMessageWebhook, user_id: str
             sanitized_content = SecurityValidators.sanitize_input(
                 message.content, max_length=2000
             )
-            sanitized_chat_name = SecurityValidators.sanitize_input(
-                message.chatName or "", max_length=100
+            # Get the monitored chat to check for custom name
+            monitored_chat = repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(
+                db, int(user_id), message.chatId
             )
+
+            # Use custom name if available, otherwise use original chat name
+            if monitored_chat and monitored_chat.custom_name:
+                sanitized_chat_name = SecurityValidators.sanitize_input(
+                    monitored_chat.custom_name, max_length=100
+                )
+            else:
+                sanitized_chat_name = SecurityValidators.sanitize_input(
+                    message.chatName or "", max_length=100
+                )
             sanitized_sender = SecurityValidators.sanitize_input(
                 message.sender or "", max_length=100
             )

@@ -245,16 +245,20 @@ class DigestScheduler:
                 )
 
                 if messages:
-                    chat_messages[chat.chat_name] = []
+                    # Use custom name if available, otherwise use original chat name
+                    display_name = (
+                        chat.custom_name if chat.custom_name else chat.chat_name
+                    )
+                    chat_messages[display_name] = []
                     for msg in messages:
                         msg_data = {
-                            "chat_name": chat.chat_name,
+                            "chat_name": display_name,
                             "sender": msg.sender,
                             "content": msg.content,
                             "importance": msg.importance_score,
                             "timestamp": msg.timestamp,
                         }
-                        chat_messages[chat.chat_name].append(msg_data)
+                        chat_messages[display_name].append(msg_data)
                         total_important_messages += 1
                         processed_message_ids.append(msg.id)
 
