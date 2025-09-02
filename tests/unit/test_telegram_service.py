@@ -44,6 +44,81 @@ class TestTelegramService:
         # creation works
         assert request is not None
 
+    def test_escape_markdown_basic(self):
+        """Test basic Markdown escaping functionality"""
+        # Test square brackets (most important for custom names)
+        assert self.service._escape_markdown("[Test]") == "\\[Test\\]"
+        assert self.service._escape_markdown("Chat [Name]") == "Chat \\[Name\\]"
+
+        # Test other Markdown characters
+        assert self.service._escape_markdown("*bold*") == "\\*bold\\*"
+        assert self.service._escape_markdown("_italic_") == "\\_italic\\_"
+        assert self.service._escape_markdown("`code`") == "\\`code\\`"
+        assert self.service._escape_markdown("(text)") == "\\(text\\)"
+
+        # Test multiple special characters
+        assert (
+            self.service._escape_markdown("[Name] with *bold*")
+            == "\\[Name\\] with \\*bold\\*"
+        )
+        assert (
+            self.service._escape_markdown("Complex: [A] *B* _C_ `D` (E)")
+            == "Complex: \\[A\\] \\*B\\* \\_C\\_ \\`D\\` \\(E\\)"
+        )
+
+    def test_escape_markdown_edge_cases(self):
+        """Test edge cases for Markdown escaping"""
+        # Test empty string
+        assert self.service._escape_markdown("") == ""
+
+        # Test None (should handle gracefully)
+        assert self.service._escape_markdown(None) == None
+
+        # Test string with no special characters
+        assert self.service._escape_markdown("Normal text") == "Normal text"
+
+        # Test string with only special characters
+        assert self.service._escape_markdown("[*_`()]") == "\\[\\*\\_\\`\\(\\)\\]"
+
+        # Test string with escaped characters already
+        assert (
+            self.service._escape_markdown("\\[Already escaped\\]")
+            == "\\\\[Already escaped\\\\]"
+        )
+
+    def test_escape_markdown_custom_names(self):
+        """Test Markdown escaping specifically for custom chat names"""
+        # Test various custom name formats that users might use
+        custom_names = [
+            "[Important Chat]",
+            "[Work Group]",
+            "[Family Chat]",
+            "[Project Team]",
+            "Chat with [brackets]",
+            "[Chat] with *formatting*",
+            "Normal Chat Name",
+            "[Chat] [Multiple] [Brackets]",
+            "Complex: [Name] with *bold* and _italic_",
+            "[Chat] (with parentheses) and `code`",
+        ]
+
+        for name in custom_names:
+            escaped = self.service._escape_markdown(name)
+            # Verify that all square brackets are escaped
+            assert "\\[" in escaped or "[" not in name
+            assert "\\]" in escaped or "]" not in name
+            # Verify that other special characters are also escaped
+            if "*" in name:
+                assert "\\*" in escaped
+            if "_" in name:
+                assert "\\_" in escaped
+            if "`" in name:
+                assert "\\`" in escaped
+            if "(" in name:
+                assert "\\(" in escaped
+            if ")" in name:
+                assert "\\)" in escaped
+
     @patch("app.telegram.service.settings")
     def test_bot_property_initialization(self, mock_settings):
         """Test bot property lazy initialization"""
@@ -86,10 +161,10 @@ class TestTelegramService:
 
     @patch.object(TelegramService, "bot")
     async def test_send_digest_success(self, mock_bot):
-        """Test successful digest sending"""
+        """Test successful digest sending with Markdown escaping"""
         mock_bot.send_message = AsyncMock()
         channel_id = "-1001234567890"
-        digest_text = "Test digest content"
+        digest_text = "Test digest with [brackets] and *bold*"
 
         result = await self.service.send_digest(channel_id, digest_text)
 
@@ -98,7 +173,8 @@ class TestTelegramService:
         call_args = mock_bot.send_message.call_args
         assert call_args[1]["chat_id"] == channel_id
         assert "📋 *Дайджест WhatsApp сообщений*" in call_args[1]["text"]
-        assert digest_text in call_args[1]["text"]
+        # Verify that the digest text is escaped
+        assert "Test digest with \\[brackets\\] and \\*bold\\*" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
         assert call_args[1]["disable_web_page_preview"]
 
@@ -116,10 +192,10 @@ class TestTelegramService:
 
     @patch.object(TelegramService, "bot")
     async def test_send_notification_success(self, mock_bot):
-        """Test successful notification sending"""
+        """Test successful notification sending with Markdown escaping"""
         mock_bot.send_message = AsyncMock()
         channel_id = "-1001234567890"
-        message = "Test notification"
+        message = "Test notification with [brackets] and *bold*"
 
         result = await self.service.send_notification(channel_id, message)
 
@@ -127,7 +203,27 @@ class TestTelegramService:
         mock_bot.send_message.assert_called_once()
         call_args = mock_bot.send_message.call_args
         assert call_args[1]["chat_id"] == channel_id
-        assert "🔔 Test notification" in call_args[1]["text"]
+        # Verify that the message is escaped
+        assert (
+            "🔔 Test notification with \\[brackets\\] and \\*bold\\*"
+            in call_args[1]["text"]
+        )
+        assert call_args[1]["parse_mode"] == "Markdown"
+
+    @patch.object(TelegramService, "bot")
+    async def test_send_notification_with_custom_name(self, mock_bot):
+        """Test notification sending with custom chat name containing special characters"""
+        mock_bot.send_message = AsyncMock()
+        channel_id = "-1001234567890"
+        message = "📱 Чат: *[Important Chat]*\n👤 От: *John Doe*"
+
+        result = await self.service.send_notification(channel_id, message)
+
+        assert result
+        mock_bot.send_message.assert_called_once()
+        call_args = mock_bot.send_message.call_args
+        # Verify that the custom name with brackets is properly escaped
+        assert "📱 Чат: \\*\\[Important Chat\\]\\*" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
 
     @patch.object(TelegramService, "bot")
@@ -279,13 +375,13 @@ class TestTelegramService:
 
     @patch.object(TelegramService, "bot")
     async def test_send_formatted_digest_success(self, mock_bot):
-        """Test successful formatted digest sending"""
+        """Test successful formatted digest sending with Markdown escaping"""
         mock_bot.send_message = AsyncMock()
         channel_id = "-1001234567890"
         digest_data = {
             "timestamp": "2024-01-01 12:00:00",
             "message_count": 25,
-            "content": "Test digest content",
+            "content": "Test digest with [brackets] and *bold* text",
             "interval_hours": 6,
         }
 
@@ -298,13 +394,39 @@ class TestTelegramService:
         assert "📱 *WhatsApp Дайджест*" in call_args[1]["text"]
         assert "🕐 2024-01-01 12:00:00" in call_args[1]["text"]
         assert "📊 Сообщений: 25" in call_args[1]["text"]
-        assert "Test digest content" in call_args[1]["text"]
+        # Verify that the content is escaped
+        assert (
+            "Test digest with \\[brackets\\] and \\*bold\\* text"
+            in call_args[1]["text"]
+        )
         assert (
             "Автоматический дайджест системы WhatsApp Monitor" in call_args[1]["text"]
         )
         assert "Интервал: каждые 6 часов" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
         assert call_args[1]["disable_web_page_preview"]
+
+    @patch.object(TelegramService, "bot")
+    async def test_send_formatted_digest_with_custom_names(self, mock_bot):
+        """Test formatted digest sending with custom chat names containing special characters"""
+        mock_bot.send_message = AsyncMock()
+        channel_id = "-1001234567890"
+        digest_data = {
+            "timestamp": "2024-01-01 12:00:00",
+            "message_count": 25,
+            "content": "📱 ЧАТ: [Important Work Chat]\n─" * 20
+            + "\n🔴 Important message here",
+            "interval_hours": 6,
+        }
+
+        result = await self.service.send_formatted_digest(channel_id, digest_data)
+
+        assert result
+        mock_bot.send_message.assert_called_once()
+        call_args = mock_bot.send_message.call_args
+        # Verify that the custom chat name with brackets is properly escaped
+        assert "📱 ЧАТ: \\[Important Work Chat\\]" in call_args[1]["text"]
+        assert call_args[1]["parse_mode"] == "Markdown"
 
     @patch.object(TelegramService, "bot")
     async def test_send_formatted_digest_failure(self, mock_bot):

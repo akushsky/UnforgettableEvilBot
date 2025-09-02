@@ -1,4 +1,5 @@
 import logging
+import re
 import ssl
 from typing import Dict, Optional
 
@@ -30,6 +31,23 @@ class TelegramService:
         if disable_ssl_verify is None:
             disable_ssl_verify = not settings.TELEGRAM_SSL_VERIFY
         self.disable_ssl_verify = disable_ssl_verify
+
+    def _escape_markdown(self, text: str) -> str:
+        """
+        Escape Markdown special characters to prevent them from being interpreted as formatting.
+        This is especially important for custom chat names that might contain brackets.
+        """
+        if not text:
+            return text
+
+        # Escape Markdown special characters
+        # Square brackets are used for links, so they need to be escaped
+        escaped = text.replace("[", "\\[").replace("]", "\\]")
+        # Also escape other Markdown special characters that might cause issues
+        escaped = escaped.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+        escaped = escaped.replace("(", "\\(").replace(")", "\\)")
+
+        return escaped
 
     def _make_request(self) -> HTTPXRequest:
         """
@@ -78,7 +96,9 @@ class TelegramService:
     async def send_digest(self, channel_id: str, digest_text: str) -> bool:
         """Send a digest to a Telegram channel"""
         try:
-            formatted_message = f"📋 *Дайджест WhatsApp сообщений*\n\n{digest_text}"
+            # Escape any Markdown characters in the digest text to prevent formatting issues
+            escaped_digest = self._escape_markdown(digest_text)
+            formatted_message = f"📋 *Дайджест WhatsApp сообщений*\n\n{escaped_digest}"
             await self.bot.send_message(
                 chat_id=channel_id,
                 text=formatted_message,
@@ -94,8 +114,10 @@ class TelegramService:
     async def send_notification(self, channel_id: str, message: str) -> bool:
         """Send a notification to a Telegram channel"""
         try:
+            # Escape any Markdown characters in the message to prevent formatting issues
+            escaped_message = self._escape_markdown(message)
             await self.bot.send_message(
-                chat_id=channel_id, text=f"🔔 {message}", parse_mode="Markdown"
+                chat_id=channel_id, text=f"🔔 {escaped_message}", parse_mode="Markdown"
             )
             return True
         except TelegramError as e:
@@ -215,7 +237,11 @@ class TelegramService:
                 f"\n⚙️ Интервал: каждые {digest_data.get('interval_hours', '?')} часов"
             )
 
-            full_message = header + digest_data.get("content", "") + footer
+            # Escape any Markdown characters in the content to prevent formatting issues
+            content = digest_data.get("content", "")
+            escaped_content = self._escape_markdown(content)
+
+            full_message = header + escaped_content + footer
 
             await self.bot.send_message(
                 chat_id=channel_id,
