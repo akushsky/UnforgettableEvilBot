@@ -47,8 +47,8 @@ class TestTelegramService:
     def test_escape_markdown_basic(self):
         """Test basic Markdown escaping functionality"""
         # Test square brackets (most important for custom names)
-        assert self.service._escape_markdown("[Test]") == "\\[Test\\]"
-        assert self.service._escape_markdown("Chat [Name]") == "Chat \\[Name\\]"
+        assert self.service._escape_markdown("[Test]") == "\\[Test]"
+        assert self.service._escape_markdown("Chat [Name]") == "Chat \\[Name]"
 
         # Test other Markdown characters
         assert self.service._escape_markdown("*bold*") == "\\*bold\\*"
@@ -59,11 +59,11 @@ class TestTelegramService:
         # Test multiple special characters
         assert (
             self.service._escape_markdown("[Name] with *bold*")
-            == "\\[Name\\] with \\*bold\\*"
+            == "\\[Name] with \\*bold\\*"
         )
         assert (
             self.service._escape_markdown("Complex: [A] *B* _C_ `D` (E)")
-            == "Complex: \\[A\\] \\*B\\* \\_C\\_ \\`D\\` \\(E\\)"
+            == "Complex: \\[A] \\*B\\* \\_C\\_ \\`D\\` \\(E\\)"
         )
 
     def test_escape_markdown_edge_cases(self):
@@ -72,18 +72,18 @@ class TestTelegramService:
         assert self.service._escape_markdown("") == ""
 
         # Test None (should handle gracefully)
-        assert self.service._escape_markdown(None) == None
+        assert self.service._escape_markdown(None) is None
 
         # Test string with no special characters
         assert self.service._escape_markdown("Normal text") == "Normal text"
 
         # Test string with only special characters
-        assert self.service._escape_markdown("[*_`()]") == "\\[\\*\\_\\`\\(\\)\\]"
+        assert self.service._escape_markdown("[*_`()]") == "\\[\\*\\_\\`\\(\\)]"
 
         # Test string with escaped characters already
         assert (
             self.service._escape_markdown("\\[Already escaped\\]")
-            == "\\\\[Already escaped\\\\]"
+            == "\\\\[Already escaped\\]"
         )
 
     def test_escape_markdown_custom_names(self):
@@ -106,7 +106,7 @@ class TestTelegramService:
             escaped = self.service._escape_markdown(name)
             # Verify that all square brackets are escaped
             assert "\\[" in escaped or "[" not in name
-            assert "\\]" in escaped or "]" not in name
+            assert "]" in escaped or "]" not in name
             # Verify that other special characters are also escaped
             if "*" in name:
                 assert "\\*" in escaped
@@ -174,7 +174,7 @@ class TestTelegramService:
         assert call_args[1]["chat_id"] == channel_id
         assert "📋 *Дайджест WhatsApp сообщений*" in call_args[1]["text"]
         # Verify that the digest text is escaped
-        assert "Test digest with \\[brackets\\] and \\*bold\\*" in call_args[1]["text"]
+        assert "Test digest with \\[brackets] and \\*bold\\*" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
         assert call_args[1]["disable_web_page_preview"]
 
@@ -205,7 +205,7 @@ class TestTelegramService:
         assert call_args[1]["chat_id"] == channel_id
         # Verify that the message is escaped
         assert (
-            "🔔 Test notification with \\[brackets\\] and \\*bold\\*"
+            "🔔 Test notification with \\[brackets] and \\*bold\\*"
             in call_args[1]["text"]
         )
         assert call_args[1]["parse_mode"] == "Markdown"
@@ -223,7 +223,7 @@ class TestTelegramService:
         mock_bot.send_message.assert_called_once()
         call_args = mock_bot.send_message.call_args
         # Verify that the custom name with brackets is properly escaped
-        assert "📱 Чат: \\*\\[Important Chat\\]\\*" in call_args[1]["text"]
+        assert "📱 Чат: \\*\\[Important Chat]\\*" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
 
     @patch.object(TelegramService, "bot")
@@ -396,8 +396,7 @@ class TestTelegramService:
         assert "📊 Сообщений: 25" in call_args[1]["text"]
         # Verify that the content is escaped
         assert (
-            "Test digest with \\[brackets\\] and \\*bold\\* text"
-            in call_args[1]["text"]
+            "Test digest with \\[brackets] and \\*bold\\* text" in call_args[1]["text"]
         )
         assert (
             "Автоматический дайджест системы WhatsApp Monitor" in call_args[1]["text"]
@@ -425,7 +424,7 @@ class TestTelegramService:
         mock_bot.send_message.assert_called_once()
         call_args = mock_bot.send_message.call_args
         # Verify that the custom chat name with brackets is properly escaped
-        assert "📱 ЧАТ: \\[Important Work Chat\\]" in call_args[1]["text"]
+        assert "📱 ЧАТ: \\[Important Work Chat]" in call_args[1]["text"]
         assert call_args[1]["parse_mode"] == "Markdown"
 
     @patch.object(TelegramService, "bot")

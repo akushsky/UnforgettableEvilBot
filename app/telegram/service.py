@@ -1,5 +1,4 @@
 import logging
-import re
 import ssl
 from typing import Dict, Optional
 
@@ -42,7 +41,7 @@ class TelegramService:
 
         # Escape Markdown special characters
         # Square brackets are used for links, so they need to be escaped
-        escaped = text.replace("[", "\\[").replace("]", "\\]")
+        escaped = text.replace("[", "\\[")
         # Also escape other Markdown special characters that might cause issues
         escaped = escaped.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
         escaped = escaped.replace("(", "\\(").replace(")", "\\)")
