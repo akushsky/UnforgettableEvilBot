@@ -390,9 +390,13 @@ class BaileysWhatsAppBridge {
       const existing = this.clients.get(userId);
       if (existing) {
         try {
-          if (existing.user) {
+          const snap = this.clientStates.get(userId) || {};
+          if (existing.user && snap.connected === true) {
             return { message: 'Client already connected', userId, connected: true };
           }
+          // Recycle stale client (preserve session on disk)
+          try { existing.end(); } catch (_) {}
+          this.clients.delete(userId);
         } catch (_) {}
       }
 
@@ -699,12 +703,18 @@ class BaileysWhatsAppBridge {
   }
 
   async attemptReconnect(userId) {
+    const snap = this.clientStates.get(userId) || {};
     const client = this.clients.get(userId);
-    if (!client) return;
 
-    try {
-      if (client.user) return; // Already connected
-    } catch (_) {}
+    if (client) {
+      let fullyConnected = false;
+      try { fullyConnected = !!(client.user) && snap.connected === true; } catch (_) {}
+      if (fullyConnected) return; // Already connected
+
+      // Recycle stale client (preserve session on disk)
+      try { client.end(); } catch (_) {}
+      this.clients.delete(userId);
+    }
 
     console.log(`reconnect ${userId}`);
     try {
