@@ -23,15 +23,27 @@ class MessageAnalyzer(BaseService):
     def _build_importance_prompt(self, message: str, chat_context: str = "") -> str:
         """Build prompt for importance analysis"""
         return f"""
-        Analyze the importance of this message on a scale from 1 to 5, where:
-        1 - unimportant (casual chat, emojis, greetings)
-        2 - low significance (personal conversations, non-critical information)
-        3 - medium (useful information, but not urgent)
-        4 - important (requires attention, work matters)
-        5 - critically important (urgent matters, problems, important notifications)
+        You are analyzing the importance of a WhatsApp message in Hebrew.
+
+        STEP 1: First, translate this Hebrew message to English:
+        "{message}"
+
+        STEP 2: Based on the translation, evaluate the importance on a scale from 1 to 5:
+
+        1 - unimportant (casual chat, emojis, greetings, general conversation)
+        2 - low significance (personal conversations, non-critical information, minor updates)
+        3 - medium (useful information, but not urgent, general announcements)
+        4 - important (requires attention, school matters, schedule changes, deadlines, class updates)
+        5 - critically important (urgent matters, problems, important notifications, immediate actions needed)
+
+        IMPORTANT CRITERIA for school/family context:
+        - Schedule and timing information (dates, deadlines, appointments, class times) = HIGH IMPORTANCE
+        - School updates and changes (classes, homework, exams, events) = HIGH IMPORTANCE
+        - Children's activities and sports (practice times, games, competitions) = HIGH IMPORTANCE
+        - Family schedule changes and important dates = HIGH IMPORTANCE
 
         Chat context: {chat_context}
-        message: {message}
+        Hebrew message: {message}
 
         Answer only with a number from 1 to 5.
         """

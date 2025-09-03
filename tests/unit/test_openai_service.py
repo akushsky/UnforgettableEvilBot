@@ -21,7 +21,11 @@ class TestMessageAnalyzer:
         chat_context = "Test context"
         prompt = self.analyzer._build_importance_prompt(message, chat_context)
 
-        assert "Analyze the importance of this message" in prompt
+        assert (
+            "You are analyzing the importance of a WhatsApp message in Hebrew" in prompt
+        )
+        assert "STEP 1: First, translate this Hebrew message to English" in prompt
+        assert "STEP 2: Based on the translation, evaluate the importance" in prompt
         assert message in prompt
         assert chat_context in prompt
         assert "Answer only with a number from 1 to 5" in prompt
