@@ -79,9 +79,7 @@ class MessageAnalyzer(BaseService):
                 importance_emoji = (
                     "🔴"
                     if msg["importance"] >= 5
-                    else "🟡"
-                    if msg["importance"] >= 4
-                    else "🟢"
+                    else "🟡" if msg["importance"] >= 4 else "🟢"
                 )
                 chat_sections += f"{importance_emoji} {msg['content']}\n"
 

@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff black mypy types-requests types-PyYAML types-psutil types-redis types-aiofiles types-python-dateutil types-pytz types-cryptography
+          pip install ruff "black==25.1.0" mypy types-requests types-PyYAML types-psutil types-redis types-aiofiles types-python-dateutil types-pytz types-cryptography
 
       - name: Run Ruff
         run: ruff check .

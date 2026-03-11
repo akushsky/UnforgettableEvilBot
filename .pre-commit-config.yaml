@@ -1,10 +1,9 @@
 repos:
   # Black - Python code formatter
   - repo: https://github.com/psf/black
-    rev: 23.12.1
+    rev: 25.1.0
     hooks:
       - id: black
-        language_version: python3.12
         args: [--line-length=88]
 
   # Ruff - Fast linter (replaces flake8 + isort + many plugins)

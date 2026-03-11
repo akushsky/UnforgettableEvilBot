@@ -108,9 +108,9 @@ class TestOpenAIServiceIntegration:
             mock_response_obj = R()
             mock_response_obj.choices = [R()]
             mock_response_obj.choices[0].message = R()
-            mock_response_obj.choices[
-                0
-            ].message.content = "📊 Daily Digest Summary\n\n• Project updates discussed\n• Important decisions made\n• Next steps outlined"
+            mock_response_obj.choices[0].message.content = (
+                "📊 Daily Digest Summary\n\n• Project updates discussed\n• Important decisions made\n• Next steps outlined"
+            )
             mock_usage = R()
             mock_usage.prompt_tokens = 300
             mock_usage.completion_tokens = 100
