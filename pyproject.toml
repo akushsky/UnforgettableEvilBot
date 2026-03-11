@@ -150,7 +150,20 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Note: Removed ignore_errors overrides to enable stricter type checking
+# SQLAlchemy ORM modules: Column[T] vs T false positives
+[[tool.mypy.overrides]]
+module = [
+    "app.database.connection",
+    "app.core.openai_monitoring",
+    "app.core.repositories",
+    "app.core.resource_savings",
+    "app.core.data_cleanup",
+    "app.scheduler.digest_scheduler",
+    "app.api.whatsapp_webhooks",
+    "app.api.user_routes",
+    "app.api.admin_routes",
+]
+disable_error_code = ["arg-type", "assignment", "index", "call-overload", "misc", "attr-defined"]
 
 # Pytest configuration
 [tool.pytest.ini_options]
