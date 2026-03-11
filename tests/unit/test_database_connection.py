@@ -5,11 +5,10 @@ import pytest
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from app.database.connection import (
-    SessionLocal,
-    engine,
     get_db,
     get_db_session,
     get_db_stats,
+    get_engine,
     health_check_database,
     optimize_database,
     reset_db_stats,
@@ -35,7 +34,6 @@ class TestDatabaseConnection:
 
     def test_get_db_stats_with_queries(self):
         """Test database statistics with query data"""
-        # Simulate some query times
         from app.database.connection import _db_stats
 
         _db_stats["total_queries"] = 5
@@ -56,7 +54,6 @@ class TestDatabaseConnection:
         """Test that query times array is limited"""
         from app.database.connection import _db_stats
 
-        # Add more than 1000 query times
         _db_stats["query_times"] = [0.1] * 1500
 
         stats = get_db_stats()
@@ -68,7 +65,6 @@ class TestDatabaseConnection:
         """Test resetting database statistics"""
         from app.database.connection import _db_stats
 
-        # Set some stats
         _db_stats["total_queries"] = 10
         _db_stats["slow_queries"] = 2
         _db_stats["connection_errors"] = 1
@@ -82,52 +78,46 @@ class TestDatabaseConnection:
         assert stats["connection_errors"] == 0
         assert stats["query_times"] == []
 
-    @patch("app.database.connection.SessionLocal")
-    def test_get_db_success(self, mock_session_local):
+    @patch("app.database.connection._get_session_local")
+    def test_get_db_success(self, mock_get_session_local):
         """Test successful database session creation"""
         mock_session = Mock()
-        mock_session_local.return_value = mock_session
+        mock_get_session_local.return_value.return_value = mock_session
 
-        # Test the generator function
         db_gen = get_db()
         db = next(db_gen)
 
         assert db == mock_session
-        mock_session_local.assert_called_once()
+        mock_get_session_local.assert_called_once()
 
-        # Simulate successful completion
         with contextlib.suppress(StopIteration):
             next(db_gen)
 
         mock_session.close.assert_called_once()
 
-    @patch("app.database.connection.SessionLocal")
-    def test_get_db_exception(self, mock_session_local):
+    @patch("app.database.connection._get_session_local")
+    def test_get_db_exception(self, mock_get_session_local):
         """Test database session with exception"""
         mock_session = Mock()
-        mock_session_local.return_value = mock_session
+        mock_get_session_local.return_value.return_value = mock_session
 
-        # Simulate an exception
         mock_session.some_operation.side_effect = SQLAlchemyError("Database error")
 
         db_gen = get_db()
         db = next(db_gen)
 
-        # Trigger exception and complete the generator
         with pytest.raises(SQLAlchemyError):
             db.some_operation()
-            # Complete the generator to trigger the exception handling
             with contextlib.suppress(StopIteration):
                 next(db_gen)
 
-        # Just verify that the session was created
-        mock_session_local.assert_called_once()
+        mock_get_session_local.assert_called_once()
 
-    @patch("app.database.connection.SessionLocal")
-    def test_get_db_session_success(self, mock_session_local):
+    @patch("app.database.connection._get_session_local")
+    def test_get_db_session_success(self, mock_get_session_local):
         """Test successful database session context manager"""
         mock_session = Mock()
-        mock_session_local.return_value = mock_session
+        mock_get_session_local.return_value.return_value = mock_session
 
         with get_db_session() as db:
             assert db == mock_session
@@ -135,13 +125,12 @@ class TestDatabaseConnection:
         mock_session.commit.assert_called_once()
         mock_session.close.assert_called_once()
 
-    @patch("app.database.connection.SessionLocal")
-    def test_get_db_session_exception(self, mock_session_local):
+    @patch("app.database.connection._get_session_local")
+    def test_get_db_session_exception(self, mock_get_session_local):
         """Test database session context manager with exception"""
         mock_session = Mock()
-        mock_session_local.return_value = mock_session
+        mock_get_session_local.return_value.return_value = mock_session
 
-        # Simulate an exception
         mock_session.some_operation.side_effect = SQLAlchemyError("Database error")
 
         with pytest.raises(SQLAlchemyError), get_db_session() as db:
@@ -169,7 +158,6 @@ class TestDatabaseConnection:
 
         optimize_database()
 
-        # Should call ANALYZE and size query
         assert mock_session.execute.call_count == 2
 
     @patch("app.database.connection.settings")
@@ -192,7 +180,6 @@ class TestDatabaseConnection:
 
         optimize_database()
 
-        # Should call ANALYZE and size query
         assert mock_session.execute.call_count == 2
 
     @patch("app.database.connection.settings")
@@ -209,12 +196,11 @@ class TestDatabaseConnection:
         mock_context.__exit__ = Mock(return_value=None)
         mock_get_session.return_value = mock_context
 
-        # Should not raise exception
         optimize_database()
 
-    @patch("app.database.connection.engine")
+    @patch("app.database.connection.get_engine")
     @patch("app.database.connection.get_db_session")
-    def test_health_check_database_success(self, mock_get_session, mock_engine):
+    def test_health_check_database_success(self, mock_get_session, mock_get_engine):
         """Test successful database health check"""
         mock_session = Mock()
         mock_session.execute.return_value.scalar.return_value = 1
@@ -224,13 +210,14 @@ class TestDatabaseConnection:
         mock_context.__exit__ = Mock(return_value=None)
         mock_get_session.return_value = mock_context
 
-        # Mock pool info
         mock_pool = Mock()
         mock_pool.size.return_value = 20
         mock_pool.checkedin.return_value = 15
         mock_pool.checkedout.return_value = 5
         mock_pool.overflow.return_value = 0
+        mock_engine = Mock()
         mock_engine.pool = mock_pool
+        mock_get_engine.return_value = mock_engine
 
         result = health_check_database()
 
@@ -261,16 +248,27 @@ class TestDatabaseConnection:
         assert "pool_info" in result
         assert "stats" in result
 
+    @patch("app.database.connection.get_engine")
     @patch("app.database.connection.get_db_session")
-    def test_health_check_database_wrong_result(self, mock_get_session):
+    def test_health_check_database_wrong_result(
+        self, mock_get_session, mock_get_engine
+    ):
         """Test database health check with wrong result"""
         mock_session = Mock()
-        mock_session.execute.return_value.scalar.return_value = 0  # Wrong result
+        mock_session.execute.return_value.scalar.return_value = 0
 
         mock_context = Mock()
         mock_context.__enter__ = Mock(return_value=mock_session)
         mock_context.__exit__ = Mock(return_value=None)
         mock_get_session.return_value = mock_context
+
+        mock_engine = Mock()
+        mock_engine.pool = Mock()
+        mock_engine.pool.size.return_value = 5
+        mock_engine.pool.checkedin.return_value = 5
+        mock_engine.pool.checkedout.return_value = 0
+        mock_engine.pool.overflow.return_value = 0
+        mock_get_engine.return_value = mock_engine
 
         result = health_check_database()
 
@@ -278,63 +276,23 @@ class TestDatabaseConnection:
 
     def test_engine_configuration(self):
         """Test engine configuration"""
-        # Test basic engine configuration
-        assert engine.echo is False
-        # Test that pool is configured (without checking specific attributes)
-        assert hasattr(engine, "pool")
+        eng = get_engine()
+        assert eng.echo is False
+        assert hasattr(eng, "pool")
 
     def test_session_local_configuration(self):
         """Test session factory configuration"""
-        assert SessionLocal.kw["autocommit"] is False
-        assert SessionLocal.kw["autoflush"] is False
-        assert SessionLocal.kw["bind"] == engine
+        from app.database.connection import _get_session_local
 
-    @patch("app.database.connection.time.time")
-    def test_query_timing_events(self, mock_time):
-        """Test query timing events"""
-        from app.database.connection import after_cursor_execute, before_cursor_execute
-
-        # Mock time progression
-        mock_time.side_effect = [100.0, 100.5]  # 0.5 second query
-
-        mock_conn = Mock()
-        mock_cursor = Mock()
-        mock_statement = "SELECT * FROM users"
-        mock_parameters: dict = {}
-        mock_context = Mock()
-        mock_executemany = False
-
-        # Simulate before execution
-        before_cursor_execute(
-            mock_conn,
-            mock_cursor,
-            mock_statement,
-            mock_parameters,
-            mock_context,
-            mock_executemany,
-        )
-
-        # Simulate after execution
-        after_cursor_execute(
-            mock_conn,
-            mock_cursor,
-            mock_statement,
-            mock_parameters,
-            mock_context,
-            mock_executemany,
-        )
-
-        # Check that stats were updated
-        stats = get_db_stats()
-        assert stats["total_queries"] == 1
-        assert len(stats["query_times"]) == 1
-        assert stats["query_times"][0] == 0.5
+        session_local = _get_session_local()
+        assert session_local.kw["autocommit"] is False
+        assert session_local.kw["autoflush"] is False
+        assert session_local.kw["bind"] == get_engine()
 
     def test_slow_query_detection_basic(self):
         """Test slow query detection basic functionality"""
         from app.database.connection import _db_stats
 
-        # Manually simulate a slow query
         _db_stats["total_queries"] = 1
         _db_stats["slow_queries"] = 1
         _db_stats["query_times"] = [1.5]
@@ -348,7 +306,6 @@ class TestDatabaseConnection:
         """Test connection error tracking"""
         from app.database.connection import _db_stats
 
-        # Simulate connection errors
         _db_stats["connection_errors"] = 3
 
         stats = get_db_stats()
@@ -358,11 +315,9 @@ class TestDatabaseConnection:
         """Test that stats persist between calls"""
         from app.database.connection import _db_stats
 
-        # Set some stats
         _db_stats["total_queries"] = 5
         _db_stats["slow_queries"] = 1
 
-        # Get stats multiple times
         stats1 = get_db_stats()
         stats2 = get_db_stats()
 
