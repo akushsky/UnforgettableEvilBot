@@ -30,7 +30,7 @@ from app.api.whatsapp_webhooks import router as whatsapp_webhooks_router
 from app.core.async_processor import task_processor
 from app.core.metrics import metrics_collector
 from app.core.tracing import set_trace_context
-from app.database.connection import engine, optimize_database
+from app.database.connection import get_engine, optimize_database
 from app.middleware.rate_limiter import RateLimiterMiddleware
 from app.models.database import Base
 from app.scheduler.digest_scheduler import DigestScheduler
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         settings.validate_required_settings()
 
         logger.info("Creating database tables...")
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=get_engine())
 
         logger.info("Optimizing database...")
         optimize_database()
@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Error stopping async task processor: {e}")
         try:
-            engine.dispose()
+            get_engine().dispose()
             logger.info("Database engine disposed")
         except Exception as e:
             logger.error(f"Error disposing database engine: {e}")

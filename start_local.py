@@ -239,11 +239,11 @@ class LocalDevelopmentServer:
         try:
             from sqlalchemy import text
 
-            from app.database.connection import engine
+            from app.database.connection import get_engine
 
             for i in range(10):
                 try:
-                    with engine.connect() as conn:
+                    with get_engine().connect() as conn:
                         conn.execute(text("SELECT 1"))
                     self.log("✅ Database is ready!")
                     return True

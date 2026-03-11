@@ -3,8 +3,8 @@ from contextlib import contextmanager
 from typing import TypedDict
 
 from sqlalchemy import create_engine, event, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from config.logging_config import get_logger
@@ -12,24 +12,74 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-# Create engine with PostgreSQL settings
-_db_url = make_url(settings.DATABASE_URL)
+_engine: Engine | None = None
+_session_local: sessionmaker[Session] | None = None
 
-_connect_args = {"connect_timeout": 10, "application_name": "WhatsAppDigestBot"}
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-    echo=False,
-    connect_args=_connect_args,
-)
+def get_engine():
+    """Lazily create and return the SQLAlchemy engine (cached after first call)."""
+    global _engine
+    if _engine is not None:
+        return _engine
 
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    connect_args = {}
+    if settings.DATABASE_URL.startswith("postgresql"):
+        connect_args = {
+            "connect_timeout": 10,
+            "application_name": "WhatsAppDigestBot",
+        }
+
+    _engine = create_engine(
+        settings.DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        echo=False,
+        connect_args=connect_args,
+    )
+
+    @event.listens_for(_engine, "before_cursor_execute")
+    def _before_cursor_execute(
+        conn, cursor, statement, parameters, context, executemany
+    ):
+        context._query_start_time = time.time()
+
+    @event.listens_for(_engine, "after_cursor_execute")
+    def _after_cursor_execute(
+        conn, cursor, statement, parameters, context, executemany
+    ):
+        total = time.time() - context._query_start_time
+        _db_stats["total_queries"] = _db_stats["total_queries"] + 1
+        query_times = _db_stats["query_times"]
+        if isinstance(query_times, list):
+            query_times.append(total)
+
+        if total > 1.0:
+            _db_stats["slow_queries"] = _db_stats["slow_queries"] + 1
+            logger.warning(f"Slow query detected: {total:.3f}s - {statement[:100]}...")
+
+    return _engine
+
+
+def _get_session_local():
+    """Lazily create and return the session factory."""
+    global _session_local
+    if _session_local is None:
+        _session_local = sessionmaker(
+            autocommit=False, autoflush=False, bind=get_engine()
+        )
+    return _session_local
+
+
+def reset_engine():
+    """Reset the cached engine and session factory (for testing)."""
+    global _engine, _session_local
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _session_local = None
 
 
 class DatabaseStats(TypedDict):
@@ -42,7 +92,6 @@ class DatabaseStats(TypedDict):
     min_query_time: float
 
 
-# Global variable for tracking statistics
 _db_stats: DatabaseStats = {
     "total_queries": 0,
     "slow_queries": 0,
@@ -54,30 +103,9 @@ _db_stats: DatabaseStats = {
 }
 
 
-@event.listens_for(engine, "before_cursor_execute")
-def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-    """Log query execution time"""
-    context._query_start_time = time.time()
-
-
-@event.listens_for(engine, "after_cursor_execute")
-def after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-    """Analyze query execution time"""
-    total = time.time() - context._query_start_time
-    _db_stats["total_queries"] = _db_stats["total_queries"] + 1
-    query_times = _db_stats["query_times"]
-    if isinstance(query_times, list):
-        query_times.append(total)
-
-    # Track slow queries (> 1 second)
-    if total > 1.0:
-        _db_stats["slow_queries"] = _db_stats["slow_queries"] + 1
-        logger.warning(f"Slow query detected: {total:.3f}s - {statement[:100]}...")
-
-
 def get_db():
     """Get database session with automatic closing"""
-    db = SessionLocal()
+    db = _get_session_local()()
     try:
         yield db
     except Exception as e:
@@ -92,7 +120,7 @@ def get_db():
 @contextmanager
 def get_db_session():
     """Context manager for working with database"""
-    db = SessionLocal()
+    db = _get_session_local()()
     try:
         yield db
         db.commit()
@@ -109,7 +137,6 @@ def get_db_stats():
     """Get database statistics"""
     stats = _db_stats.copy()
 
-    # Calculate average query time
     query_times = stats["query_times"]
     if isinstance(query_times, list) and query_times:
         avg_time = sum(query_times) / len(query_times)
@@ -123,7 +150,6 @@ def get_db_stats():
         stats["max_query_time"] = 0
         stats["min_query_time"] = 0
 
-    # Limit the size of query times array
     if isinstance(query_times, list):
         limited_times = query_times[-1000:]
         stats["query_times"] = limited_times
@@ -149,11 +175,9 @@ def optimize_database():
     """Database optimization for PostgreSQL"""
     try:
         with get_db_session() as db:
-            # Analyze tables for PostgreSQL
             db.execute(text("ANALYZE"))
             logger.info("Database analysis completed")
 
-            # Get information about database size
             result = db.execute(
                 text(
                     """
@@ -176,16 +200,15 @@ def optimize_database():
 def health_check_database():
     """Check database health"""
     try:
+        eng = get_engine()
         with get_db_session() as db:
-            # Simple request to check connection
             result = db.execute(text("SELECT 1")).scalar()
 
-            # Check connection pool
             pool_info = {
-                "pool_size": engine.pool.size(),
-                "checked_in": engine.pool.checkedin(),
-                "checked_out": engine.pool.checkedout(),
-                "overflow": engine.pool.overflow(),
+                "pool_size": eng.pool.size(),
+                "checked_in": eng.pool.checkedin(),
+                "checked_out": eng.pool.checkedout(),
+                "overflow": eng.pool.overflow(),
             }
 
             return {

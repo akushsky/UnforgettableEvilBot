@@ -8,7 +8,7 @@ import sys
 
 from sqlalchemy.orm import sessionmaker
 
-from app.database.connection import engine
+from app.database.connection import get_engine
 from app.models.database import Base
 
 sys.path.append(".")
@@ -25,11 +25,13 @@ def create_fresh_database():
             print("✅ Old database removed")
 
         # Create all tables with new structure
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=get_engine())
         print("✅ Database created with current structure")
 
         # Create session for adding test data
-        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        SessionLocal = sessionmaker(
+            autocommit=False, autoflush=False, bind=get_engine()
+        )
         db = SessionLocal()
 
         # Add test user
@@ -69,7 +71,7 @@ def create_fresh_database():
         # Check table structure directly
         from sqlalchemy import inspect
 
-        inspector = inspect(engine)
+        inspector = inspect(get_engine())
         user_columns = [col["name"] for col in inspector.get_columns("users")]
         print(f"   • Users columns: {user_columns}")
 
