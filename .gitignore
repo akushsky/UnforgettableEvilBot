@@ -198,4 +198,17 @@ Thumbs.db
 .dockerignore
 
 # Alembic
-alembic.ini.bak!/whatsapp_bridge/.wwebjs_cache/
+alembic.ini.bak
+
+# WhatsApp bridge cache
+!/whatsapp_bridge/.wwebjs_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# POC / scratch files
+WHATSAPP_POC_README.md
+test_whatsapp_poc.py
+
+# uv lockfile
+uv.lock

@@ -61,12 +61,12 @@ export PYTHONPATH=/app:$PYTHONPATH
 python -c "
 import time
 import sys
-from app.database.connection import engine
+from app.database.connection import get_engine
 from sqlalchemy import text
 
 for i in range(30):
     try:
-        with engine.connect() as conn:
+        with get_engine().connect() as conn:
             conn.execute(text('SELECT 1'))
         print('Database is ready!')
         break
