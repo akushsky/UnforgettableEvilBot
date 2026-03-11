@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 from app.core.openai_monitoring import OpenAIMetrics, OpenAIMonitor
@@ -200,8 +200,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_record_request_success(self, mock_datetime, mock_get_db_session):
         """Test recording a successful request"""
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         mock_db = Mock()
         mock_get_db_session.side_effect = _mock_db_session(mock_db)
@@ -243,8 +243,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_record_request_failure(self, mock_datetime, mock_get_db_session):
         """Test recording a failed request"""
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         mock_db = Mock()
         mock_get_db_session.side_effect = _mock_db_session(mock_db)
@@ -270,8 +270,8 @@ class TestOpenAIMonitor:
         self, mock_datetime, mock_get_db_session
     ):
         """Test recording request when database fails"""
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         mock_db = Mock()
         mock_db.add.side_effect = Exception("Database error")
@@ -285,9 +285,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_record_request_recent_requests_limit(self, mock_datetime):
         """Test that recent requests are limited to 10"""
-        # Mock datetime
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         # Record 12 requests
         for _ in range(12):
@@ -302,9 +301,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_get_stats_empty(self, mock_datetime):
         """Test getting stats with no data"""
-        # Mock datetime
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         # Mock datetime.strptime to return a real datetime
         def mock_strptime(date_string, format_string):
@@ -333,9 +331,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_get_stats_with_data(self, mock_datetime):
         """Test getting stats with data"""
-        # Mock datetime
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         # Mock datetime.strptime to return a real datetime
         def mock_strptime(date_string, format_string):
@@ -377,9 +374,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_cleanup_old_data(self, mock_datetime):
         """Test cleanup of old data"""
-        # Mock datetime
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         # Mock datetime.strptime to return a real datetime
         def mock_strptime(date_string, format_string):
@@ -412,9 +408,8 @@ class TestOpenAIMonitor:
     @patch("app.core.openai_monitoring.datetime")
     def test_cleanup_old_data_no_old_data(self, mock_datetime):
         """Test cleanup when no old data exists"""
-        # Mock datetime
-        now = datetime.utcnow()
-        mock_datetime.utcnow.return_value = now
+        now = datetime.now(UTC)
+        mock_datetime.now.return_value = now
 
         # Mock datetime.strptime to return a real datetime
         def mock_strptime(date_string, format_string):

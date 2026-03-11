@@ -39,12 +39,8 @@ def client(mock_db):
 
 @patch("app.api.admin_routes.get_whatsapp_service")
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_available_chats_success(
-    mock_auth, mock_repo_factory, mock_whatsapp, client
-):
+def test_get_available_chats_success(mock_repo_factory, mock_whatsapp, client):
     """Test GET /admin/users/{user_id}/chats returns chats when connected."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.whatsapp_connected = True
@@ -69,10 +65,8 @@ def test_get_available_chats_success(
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_available_chats_not_connected(mock_auth, mock_repo_factory, client):
+def test_get_available_chats_not_connected(mock_repo_factory, client):
     """Test GET /admin/users/{user_id}/chats returns error when not connected."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.whatsapp_connected = False
@@ -90,10 +84,8 @@ def test_get_available_chats_not_connected(mock_auth, mock_repo_factory, client)
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_add_monitored_chat_success(mock_auth, mock_repo_factory, client, mock_db):
+def test_add_monitored_chat_success(mock_repo_factory, client, mock_db):
     """Test POST /admin/users/{user_id}/chats/add adds new chat."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -114,10 +106,8 @@ def test_add_monitored_chat_success(mock_auth, mock_repo_factory, client, mock_d
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_add_monitored_chat_already_exists(mock_auth, mock_repo_factory, client):
+def test_add_monitored_chat_already_exists(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/chats/add reactivates existing inactive chat."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -138,10 +128,8 @@ def test_add_monitored_chat_already_exists(mock_auth, mock_repo_factory, client)
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_remove_chat_success(mock_auth, mock_repo_factory, client):
+def test_remove_chat_success(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/chats/{chat_id}/remove deactivates chat."""
-    mock_auth.return_value = True
     mock_chat = Mock()
     mock_chat.id = 10
     mock_chat.user_id = 1
@@ -158,10 +146,8 @@ def test_remove_chat_success(mock_auth, mock_repo_factory, client):
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_rename_chat_success(mock_auth, mock_repo_factory, client):
+def test_rename_chat_success(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/chats/{chat_id}/rename updates custom name."""
-    mock_auth.return_value = True
     mock_chat = Mock()
     mock_chat.id = 10
     mock_chat.user_id = 1
@@ -182,10 +168,8 @@ def test_rename_chat_success(mock_auth, mock_repo_factory, client):
 
 @patch("app.api.admin_routes.httpx")
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_qr_code(mock_auth, mock_repo_factory, mock_httpx, client):
+def test_get_qr_code(mock_repo_factory, mock_httpx, client):
     """Test GET /admin/users/{user_id}/qr returns QR code data."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -210,10 +194,8 @@ def test_get_qr_code(mock_auth, mock_repo_factory, mock_httpx, client):
 
 
 @patch("app.api.admin_routes.httpx")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_check_qr_status(mock_auth, mock_httpx, client):
+def test_check_qr_status(mock_httpx, client):
     """Test GET /admin/users/{user_id}/qr/check returns QR status."""
-    mock_auth.return_value = True
 
     mock_response = Mock()
     mock_response.status_code = 200
@@ -232,10 +214,8 @@ def test_check_qr_status(mock_auth, mock_httpx, client):
 
 @patch("app.api.admin_routes.httpx")
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_whatsapp_status(mock_auth, mock_repo_factory, mock_httpx, client):
+def test_get_whatsapp_status(mock_repo_factory, mock_httpx, client):
     """Test GET /admin/users/{user_id}/whatsapp/status returns status."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.whatsapp_connected = True
@@ -261,10 +241,8 @@ def test_get_whatsapp_status(mock_auth, mock_repo_factory, mock_httpx, client):
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_update_whatsapp_status(mock_auth, mock_repo_factory, client):
+def test_update_whatsapp_status(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/whatsapp/update-status updates status."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.whatsapp_connected = False
@@ -286,10 +264,8 @@ def test_update_whatsapp_status(mock_auth, mock_repo_factory, client):
 
 @patch("app.scheduler.digest_scheduler.DigestScheduler")
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_generate_digest(mock_auth, mock_repo_factory, mock_scheduler_cls, client):
+def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
     """Test POST /admin/users/{user_id}/digest/generate creates digest."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.is_active = True
@@ -312,10 +288,8 @@ def test_generate_digest(mock_auth, mock_repo_factory, mock_scheduler_cls, clien
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_messages(mock_auth, mock_repo_factory, client):
+def test_get_messages(mock_repo_factory, client):
     """Test GET /admin/users/{user_id}/messages returns messages."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -334,10 +308,8 @@ def test_get_messages(mock_auth, mock_repo_factory, client):
 
 
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_get_digests(mock_auth, mock_repo_factory, client):
+def test_get_digests(mock_repo_factory, client):
     """Test GET /admin/users/{user_id}/digests returns digest logs."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -356,10 +328,8 @@ def test_get_digests(mock_auth, mock_repo_factory, client):
 
 @patch("app.core.data_cleanup.cleanup_service")
 @patch("app.api.admin_routes.repository_factory")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_storage_stats(mock_auth, mock_repo_factory, mock_cleanup, client):
+def test_storage_stats(mock_repo_factory, mock_cleanup, client):
     """Test GET /admin/storage/stats returns storage statistics."""
-    mock_auth.return_value = True
     mock_cleanup.get_storage_stats = AsyncMock(
         return_value={"total_messages": 100, "storage_mb": 50}
     )
@@ -373,10 +343,8 @@ def test_storage_stats(mock_auth, mock_repo_factory, mock_cleanup, client):
 
 
 @patch("app.core.data_cleanup.cleanup_service")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_storage_cleanup(mock_auth, mock_cleanup, client):
+def test_storage_cleanup(mock_cleanup, client):
     """Test POST /admin/storage/cleanup runs cleanup."""
-    mock_auth.return_value = True
     mock_cleanup.run_full_cleanup = AsyncMock(
         return_value={"deleted": 10, "freed_mb": 5}
     )
@@ -390,10 +358,8 @@ def test_storage_cleanup(mock_auth, mock_cleanup, client):
 
 
 @patch("app.core.resource_savings.resource_savings_service")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_resource_savings(mock_auth, mock_savings, client):
+def test_resource_savings(mock_savings, client):
     """Test GET /admin/resource-savings returns savings metrics."""
-    mock_auth.return_value = True
     mock_savings.get_total_savings.return_value = {
         "total_whatsapp_connections_saved": 5,
         "total_memory_mb_saved": 100,
@@ -411,10 +377,8 @@ def test_resource_savings(mock_auth, mock_savings, client):
 
 
 @patch("app.api.admin_routes.httpx")
-@patch("app.api.admin_routes.require_admin_auth")
-def test_system_status(mock_auth, mock_httpx, client):
+def test_system_status(mock_httpx, client):
     """Test GET /admin/system/status returns system status."""
-    mock_auth.return_value = True
 
     mock_response = Mock()
     mock_response.status_code = 200

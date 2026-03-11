@@ -385,51 +385,46 @@ class TestWhatsAppService:
     @patch("app.whatsapp.service.os.name")
     @patch("app.whatsapp.service.os.killpg")
     @patch("app.whatsapp.service.os.getpgid")
-    def test_del_cleanup_posix(self, mock_getpgid, mock_killpg, mock_os_name):
-        """Test cleanup on POSIX systems"""
+    def test_close_cleanup_posix(self, mock_getpgid, mock_killpg, mock_os_name):
+        """Test close() cleanup on POSIX systems"""
         mock_os_name.return_value = "posix"
         mock_process = Mock()
         mock_process.pid = 12345
         self.service.bridge_process = mock_process
         mock_getpgid.return_value = 12345
 
-        # Trigger cleanup
-        self.service.__del__()
+        self.service.close()
 
         mock_getpgid.assert_called_once_with(12345)
         mock_killpg.assert_called_once_with(12345, signal.SIGTERM)
 
     @patch("app.whatsapp.service.os.name", "nt")
-    def test_del_cleanup_windows(self):
-        """Test cleanup on Windows systems"""
+    def test_close_cleanup_windows(self):
+        """Test close() cleanup on Windows systems"""
         mock_process = Mock()
         self.service.bridge_process = mock_process
 
-        # Trigger cleanup
-        self.service.__del__()
+        self.service.close()
 
-        # The cleanup should call terminate on the process
         mock_process.terminate.assert_called_once()
 
     @patch("app.whatsapp.service.os.name")
     @patch("app.whatsapp.service.os.killpg")
-    def test_del_cleanup_exception(self, mock_killpg, mock_os_name):
-        """Test cleanup with exception handling"""
+    def test_close_cleanup_exception(self, mock_killpg, mock_os_name):
+        """Test close() with exception handling"""
         mock_os_name.return_value = "posix"
         mock_process = Mock()
         mock_process.pid = 12345
         self.service.bridge_process = mock_process
         mock_killpg.side_effect = Exception("Process not found")
 
-        # Should not raise exception
-        self.service.__del__()
+        self.service.close()
 
-    def test_del_no_process(self):
-        """Test cleanup when no process exists"""
+    def test_close_no_process(self):
+        """Test close() when no process exists"""
         self.service.bridge_process = None
 
-        # Should not raise exception
-        self.service.__del__()
+        self.service.close()
 
     async def test_get_new_messages_empty_chat_ids(self):
         """Test message retrieval with empty chat IDs"""

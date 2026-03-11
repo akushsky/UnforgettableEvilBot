@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 from sqlalchemy.orm import Session
@@ -333,9 +333,7 @@ class TestDigestLogRepository:
         user_id = 1
         hours_back = 24
         mock_digest = Mock(spec=DigestLog)
-        mock_digest.created_at = datetime.utcnow() - timedelta(
-            hours=25
-        )  # More than 24 hours ago
+        mock_digest.created_at = datetime.now(UTC) - timedelta(hours=25)
 
         with patch.object(self.repository, "get_last_digest_for_user") as mock_get_last:
             mock_get_last.return_value = mock_digest

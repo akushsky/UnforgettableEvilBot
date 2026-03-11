@@ -39,10 +39,8 @@ def client(mock_db):
 
 @patch("app.api.user_routes.get_telegram_service")
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_users_page_returns_html(mock_auth, mock_repo_factory, mock_telegram, client):
+def test_users_page_returns_html(mock_repo_factory, mock_telegram, client):
     """Test GET /admin/users returns HTML user list page."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_all.return_value = []
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
@@ -51,15 +49,12 @@ def test_users_page_returns_html(mock_auth, mock_repo_factory, mock_telegram, cl
 
     assert response.status_code == 200
     assert "text/html" in response.headers.get("content-type", "")
-    mock_auth.assert_called_once()
     mock_user_repo.get_all.assert_called_once()
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_create_user_success(mock_auth, mock_repo_factory, client, mock_db):
+def test_create_user_success(mock_repo_factory, client, mock_db):
     """Test POST /admin/users/create creates new user successfully."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     mock_user_repo.get_by_username.return_value = None
     mock_user_repo.get_by_email.return_value = None
@@ -67,7 +62,7 @@ def test_create_user_success(mock_auth, mock_repo_factory, client, mock_db):
 
     with (
         patch("app.api.user_routes.get_password_hash", return_value="hashed"),
-        patch("app.api.user_routes.create_default_user_settings"),
+        patch("app.core.user_utils.create_default_user_settings"),
     ):
         new_user = Mock()
         new_user.id = 1
@@ -90,12 +85,8 @@ def test_create_user_success(mock_auth, mock_repo_factory, client, mock_db):
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_create_user_duplicate_returns_400(
-    mock_auth, mock_repo_factory, client, mock_db
-):
+def test_create_user_duplicate_returns_400(mock_repo_factory, client, mock_db):
     """Test POST /admin/users/create returns 400 when user already exists."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     existing_user = Mock()
     mock_user_repo.get_by_username.return_value = existing_user
@@ -115,10 +106,8 @@ def test_create_user_duplicate_returns_400(
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_user_detail_page(mock_auth, mock_repo_factory, client):
+def test_user_detail_page(mock_repo_factory, client):
     """Test GET /admin/users/{user_id} returns user detail page."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.username = "testuser"
@@ -152,10 +141,8 @@ def test_user_detail_page(mock_auth, mock_repo_factory, client):
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_user_detail_not_found_returns_404(mock_auth, mock_repo_factory, client):
+def test_user_detail_not_found_returns_404(mock_repo_factory, client):
     """Test GET /admin/users/{user_id} returns 404 when user not found."""
-    mock_auth.return_value = True
     mock_user_repo = Mock()
     from fastapi import HTTPException
 
@@ -170,10 +157,8 @@ def test_user_detail_not_found_returns_404(mock_auth, mock_repo_factory, client)
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_suspend_user_success(mock_auth, mock_repo_factory, client):
+def test_suspend_user_success(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/suspend suspends user successfully."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.username = "testuser"
@@ -195,7 +180,7 @@ def test_suspend_user_success(mock_auth, mock_repo_factory, client):
         mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "app.api.user_routes.resource_savings_service",
+            "app.core.resource_savings.resource_savings_service",
             Mock(record_suspension_savings=Mock(return_value={})),
         ):
             response = client.post("/admin/users/1/suspend")
@@ -208,10 +193,8 @@ def test_suspend_user_success(mock_auth, mock_repo_factory, client):
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_resume_user_success(mock_auth, mock_repo_factory, client):
+def test_resume_user_success(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/resume resumes user successfully."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.username = "testuser"
@@ -241,12 +224,8 @@ def test_resume_user_success(mock_auth, mock_repo_factory, client):
 
 @patch("app.api.user_routes.get_telegram_service")
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_test_telegram_connection_success(
-    mock_auth, mock_repo_factory, mock_telegram, client
-):
+def test_test_telegram_connection_success(mock_repo_factory, mock_telegram, client):
     """Test POST /admin/users/{user_id}/telegram/test succeeds when connection works."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.is_active = True
@@ -277,12 +256,8 @@ def test_test_telegram_connection_success(
 
 @patch("app.api.user_routes.get_telegram_service")
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_test_telegram_connection_failure(
-    mock_auth, mock_repo_factory, mock_telegram, client
-):
+def test_test_telegram_connection_failure(mock_repo_factory, mock_telegram, client):
     """Test POST /admin/users/{user_id}/telegram/test returns error on failure."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
     mock_user.is_active = True
@@ -306,10 +281,8 @@ def test_test_telegram_connection_failure(
 
 
 @patch("app.api.user_routes.repository_factory")
-@patch("app.api.user_routes.require_admin_auth")
-def test_create_user_settings(mock_auth, mock_repo_factory, client):
+def test_create_user_settings(mock_repo_factory, client):
     """Test POST /admin/users/{user_id}/settings/create creates default settings."""
-    mock_auth.return_value = True
     mock_user = Mock()
     mock_user.id = 1
 
