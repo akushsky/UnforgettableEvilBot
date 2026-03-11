@@ -1,7 +1,7 @@
 import asyncio
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404
 from datetime import datetime
 
 import httpx
@@ -44,7 +44,7 @@ class WhatsAppService:
                 os.path.dirname(os.path.dirname(__file__)), "..", "whatsapp_bridge"
             )
 
-            self.bridge_process = subprocess.Popen(
+            self.bridge_process = subprocess.Popen(  # nosec B603 B607
                 ["node", "bridge.js"],
                 cwd=bridge_path,
                 stdout=subprocess.PIPE,

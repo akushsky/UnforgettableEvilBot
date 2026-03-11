@@ -53,7 +53,7 @@ def get_admin_auth_dependency(request: Request) -> bool:
 def verify_admin_password(password: str) -> bool:
     """Verify admin password against environment variable"""
     admin_password = settings.ADMIN_PASSWORD
-    if not admin_password or admin_password == "admin123":
+    if not admin_password or admin_password == "admin123":  # nosec B105
         logger.error(
             "ADMIN_PASSWORD is not configured or still set to default. "
             "Set a strong ADMIN_PASSWORD environment variable."
