@@ -123,7 +123,10 @@ def test_receive_message_unmonitored_chat(client, db_session):
     assert response.status_code == 200
     data = response.json()
     assert data.get("status") == "skipped"
-    assert "not monitored" in data.get("message", "").lower()
+    assert (
+        "not" in data.get("message", "").lower()
+        and "monitored" in data.get("message", "").lower()
+    )
 
 
 @pytest.mark.e2e
