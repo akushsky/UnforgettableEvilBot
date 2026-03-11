@@ -28,12 +28,19 @@ def _mock_db_cm(mock_db):
 class TestHealthCheck:
     """Tests for GET /health route."""
 
+    @patch("app.api.health.openai_monitor")
     @patch("app.api.health.settings")
     @patch("app.api.health.cache_manager")
     @patch("app.api.health.psutil")
     @patch("app.api.health.health_check_database")
     def test_health_returns_200_when_healthy(
-        self, mock_health_db, mock_psutil, mock_cache, mock_settings, client
+        self,
+        mock_health_db,
+        mock_psutil,
+        mock_cache,
+        mock_settings,
+        mock_openai_monitor,
+        client,
     ):
         """Test health endpoint returns 200 when all checks pass."""
         mock_settings.TESTING = True
@@ -59,6 +66,12 @@ class TestHealthCheck:
             "memory_hit_ratio": 0.8,
             "memory_cache_size": 100,
             "redis_hit_ratio": 0.7,
+        }
+
+        mock_openai_monitor.get_stats.return_value = {
+            "success_rate": 1.0,
+            "recent_errors": 0,
+            "total_requests": 0,
         }
 
         with patch("app.api.health.get_db_session") as mock_get_db:
