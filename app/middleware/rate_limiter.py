@@ -1,6 +1,5 @@
 import time
 from collections import defaultdict
-from typing import Dict, List
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -22,7 +21,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.calls_per_minute = calls_per_minute
-        self.requests: Dict[str, List[float]] = defaultdict(list)
+        self.requests: dict[str, list[float]] = defaultdict(list)
 
     async def dispatch(self, request: Request, call_next):
         """Dispatch.

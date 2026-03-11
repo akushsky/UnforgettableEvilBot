@@ -183,7 +183,7 @@ done
 
     def test_startup_script_structure(self, temp_startup_script):
         """Test that startup script has the correct structure"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for essential components
@@ -197,7 +197,7 @@ done
 
     def test_startup_sequence_order(self, temp_startup_script):
         """Test that startup sequence follows the correct order"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check that services start in the correct order
@@ -225,7 +225,7 @@ done
 
     def test_startup_script_initialization_delay(self, temp_startup_script):
         """Test that startup script includes initialization delay"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for the 5-second delay
@@ -234,7 +234,7 @@ done
 
     def test_startup_script_health_checks(self, temp_startup_script):
         """Test that startup script includes proper health checks"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for health check patterns
@@ -244,7 +244,7 @@ done
 
     def test_startup_script_error_handling(self, temp_startup_script):
         """Test that startup script includes proper error handling"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for error handling
@@ -254,7 +254,7 @@ done
 
     def test_startup_script_environment_variables(self, temp_startup_script):
         """Test that startup script handles environment variables correctly"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for environment variable usage
@@ -264,7 +264,7 @@ done
 
     def test_startup_script_process_monitoring(self, temp_startup_script):
         """Test that startup script includes process monitoring"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for process monitoring
@@ -275,7 +275,7 @@ done
 
     def test_startup_script_restart_logic(self, temp_startup_script):
         """Test that startup script includes restart logic"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for restart logic
@@ -286,7 +286,7 @@ done
 
     def test_startup_script_logging(self, temp_startup_script):
         """Test that startup script includes proper logging"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for logging function
@@ -307,17 +307,17 @@ done
         for message in log_messages:
             # Check for log function calls with the message (handle unicode characters)
             message_found = False
-            if f'log "{message}"' in content:
-                message_found = True
-            elif f"log '{message}'" in content:
-                message_found = True
-            elif message in content:  # Fallback: just check if message appears anywhere
+            if (
+                f'log "{message}"' in content
+                or f"log '{message}'" in content
+                or message in content
+            ):
                 message_found = True
             assert message_found, f"Log message '{message}' not found in startup script"
 
     def test_startup_script_directory_creation(self, temp_startup_script):
         """Test that startup script creates necessary directories"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for directory creation
@@ -326,7 +326,7 @@ done
 
     def test_startup_script_signal_handling(self, temp_startup_script):
         """Test that startup script handles signals properly"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for signal handling
@@ -337,7 +337,7 @@ done
 
     def test_startup_script_debug_mode_handling(self, temp_startup_script):
         """Test that startup script handles debug mode correctly"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for debug mode conditional
@@ -348,7 +348,7 @@ done
 
     def test_startup_script_port_handling(self, temp_startup_script):
         """Test that startup script handles port configuration correctly"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check for port handling
@@ -358,7 +358,7 @@ done
 
     def test_startup_script_restore_all_timing(self, temp_startup_script):
         """Test that restore-all is called at the right time"""
-        with open(temp_startup_script, "r") as f:
+        with open(temp_startup_script) as f:
             content = f.read()
 
         # Check that restore-all is called after both services are ready

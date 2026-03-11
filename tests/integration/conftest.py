@@ -1,7 +1,7 @@
 import asyncio
 import uuid
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Generator
 
 import pytest
 from fastapi.testclient import TestClient

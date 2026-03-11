@@ -1,10 +1,11 @@
 import asyncio
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from config.logging_config import get_logger
 from config.settings import settings
@@ -42,10 +43,10 @@ class AsyncTask:
     priority: TaskPriority
     status: TaskStatus
     created_at: float
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    started_at: float | None = None
+    completed_at: float | None = None
     result: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     retry_count: int = 0
     max_retries: int = 3
 
@@ -55,8 +56,8 @@ class AsyncTaskProcessor:
 
     def __init__(
         self,
-        max_workers: Optional[int] = None,
-        max_process_workers: Optional[int] = None,
+        max_workers: int | None = None,
+        max_process_workers: int | None = None,
     ):
         """Init  .
 
@@ -70,7 +71,7 @@ class AsyncTaskProcessor:
         self.logger = get_logger(__name__)
 
         # Task queues by priority (async to avoid blocking the event loop)
-        self.task_queues: Dict[TaskPriority, asyncio.Queue[AsyncTask]] = {
+        self.task_queues: dict[TaskPriority, asyncio.Queue[AsyncTask]] = {
             TaskPriority.LOW: asyncio.Queue(),
             TaskPriority.NORMAL: asyncio.Queue(),
             TaskPriority.HIGH: asyncio.Queue(),
@@ -78,8 +79,8 @@ class AsyncTaskProcessor:
         }
 
         # Active tasks
-        self.active_tasks: Dict[str, AsyncTask] = {}
-        self.completed_tasks: Dict[str, AsyncTask] = {}
+        self.active_tasks: dict[str, AsyncTask] = {}
+        self.completed_tasks: dict[str, AsyncTask] = {}
 
         # Thread pool for CPU-intensive tasks
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
@@ -90,7 +91,7 @@ class AsyncTaskProcessor:
         self._stop_event = threading.Event()
 
         # Store queue processing tasks
-        self._queue_tasks: List[asyncio.Task] = []
+        self._queue_tasks: list[asyncio.Task] = []
 
         # Statistics
         self.stats = {
@@ -160,7 +161,7 @@ class AsyncTaskProcessor:
         func: Callable,
         *args,
         priority: TaskPriority = TaskPriority.NORMAL,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
         max_retries: int = 3,
         **kwargs,
     ) -> str:
@@ -201,7 +202,7 @@ class AsyncTaskProcessor:
                 # Execute the task
                 await self._execute_task(task)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Queue is empty, continue loop
                 await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
                 continue
@@ -305,7 +306,7 @@ class AsyncTaskProcessor:
                     + processing_time
                 ) / self.stats["completed_tasks"]
 
-    def get_task_status(self, task_id: str) -> Optional[AsyncTask]:
+    def get_task_status(self, task_id: str) -> AsyncTask | None:
         """Get task status"""
         if task_id in self.active_tasks:
             return self.active_tasks[task_id]
@@ -327,7 +328,7 @@ class AsyncTaskProcessor:
             return True
         return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get processor statistics"""
         queue_sizes = {
             priority.name: queue.qsize() for priority, queue in self.task_queues.items()

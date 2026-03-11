@@ -59,29 +59,31 @@ class TestOpenAIClient:
         )
 
         # Mock the openai_monitor
-        with patch("app.openai_service.client.openai_monitor") as mock_monitor:
-            with patch.object(self.client, "log_operation") as mock_log:
-                result = await self.client.make_request("Test prompt")
+        with (
+            patch("app.openai_service.client.openai_monitor") as mock_monitor,
+            patch.object(self.client, "log_operation") as mock_log,
+        ):
+            result = await self.client.make_request("Test prompt")
 
-                assert result == "Test response"
+            assert result == "Test response"
 
-                # Verify the API call
-                self.client.client.chat.completions.create.assert_called_once_with(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": "Test prompt"}],
-                    max_tokens=1000,
-                    temperature=0.3,
-                )
+            # Verify the API call
+            self.client.client.chat.completions.create.assert_called_once_with(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "Test prompt"}],
+                max_tokens=1000,
+                temperature=0.3,
+            )
 
-                # Verify metrics recording
-                mock_monitor.record_request.assert_called_once_with(
-                    model="gpt-4o-mini", input_tokens=10, output_tokens=20, success=True
-                )
+            # Verify metrics recording
+            mock_monitor.record_request.assert_called_once_with(
+                model="gpt-4o-mini", input_tokens=10, output_tokens=20, success=True
+            )
 
-                # Verify logging
-                mock_log.assert_called_once_with(
-                    "openai_request", {"model": "gpt-4o-mini", "tokens_used": 30}
-                )
+            # Verify logging
+            mock_log.assert_called_once_with(
+                "openai_request", {"model": "gpt-4o-mini", "tokens_used": 30}
+            )
 
     @pytest.mark.asyncio
     async def test_make_request_custom_parameters(self):
@@ -129,24 +131,24 @@ class TestOpenAIClient:
         )
 
         # Mock the openai_monitor
-        with patch("app.openai_service.client.openai_monitor") as mock_monitor:
-            with patch.object(self.client.logger, "error") as mock_logger:
-                with pytest.raises(Exception, match="API Error"):
-                    await self.client.make_request("Test prompt")
+        with (
+            patch("app.openai_service.client.openai_monitor") as mock_monitor,
+            patch.object(self.client.logger, "error") as mock_logger,
+            pytest.raises(Exception, match="API Error"),
+        ):
+            await self.client.make_request("Test prompt")
 
-                # Verify failed metrics recording
-                mock_monitor.record_request.assert_called_once_with(
-                    model="gpt-4o-mini",
-                    input_tokens=0,
-                    output_tokens=0,
-                    success=False,
-                    error="API Error",
-                )
+        # Verify failed metrics recording
+        mock_monitor.record_request.assert_called_once_with(
+            model="gpt-4o-mini",
+            input_tokens=0,
+            output_tokens=0,
+            success=False,
+            error="API Error",
+        )
 
-                # Verify error logging
-                mock_logger.assert_called_once_with(
-                    "OpenAI API request failed: API Error"
-                )
+        # Verify error logging
+        mock_logger.assert_called_once_with("OpenAI API request failed: API Error")
 
     @pytest.mark.asyncio
     async def test_make_request_strips_whitespace(self):

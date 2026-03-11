@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -347,7 +347,7 @@ class TestWhatsAppServiceIntegration:
     ):
         """Test getting WhatsApp messages with database integration."""
         # Mock WhatsApp API response
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_messages_response = {
             "messages": [
                 {
@@ -383,7 +383,7 @@ class TestWhatsAppServiceIntegration:
             mock_client.get.side_effect = _get
 
             # Get messages for a chat
-            since = datetime.now(timezone.utc) - timedelta(days=1)
+            since = datetime.now(UTC) - timedelta(days=1)
             messages = await whatsapp_service.get_new_messages(
                 sample_chat.user_id, [sample_chat.chat_id], since
             )

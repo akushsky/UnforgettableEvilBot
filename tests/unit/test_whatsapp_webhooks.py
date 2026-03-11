@@ -119,33 +119,33 @@ class TestWhatsAppWebhooks:
 
     def test_active_users_endpoint_integration(self, client, mock_db):
         """Test the /active-users endpoint through the router"""
-        with patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db):
-            with patch(
-                "app.api.whatsapp_webhooks.repository_factory"
-            ) as mock_repo_factory:
-                # Setup mock users
-                mock_users = [
-                    Mock(
-                        id=1,
-                        username="testuser",
-                        whatsapp_connected=True,
-                        is_active=True,
-                    )
-                ]
+        with (
+            patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db),
+            patch("app.api.whatsapp_webhooks.repository_factory") as mock_repo_factory,
+        ):
+            # Setup mock users
+            mock_users = [
+                Mock(
+                    id=1,
+                    username="testuser",
+                    whatsapp_connected=True,
+                    is_active=True,
+                )
+            ]
 
-                mock_user_repo = Mock()
-                mock_user_repo.get_active_users_with_whatsapp.return_value = mock_users
-                mock_repo_factory.get_user_repository.return_value = mock_user_repo
+            mock_user_repo = Mock()
+            mock_user_repo.get_active_users_with_whatsapp.return_value = mock_users
+            mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-                # Make request to endpoint
-                response = client.get("/webhook/whatsapp/active-users")
+            # Make request to endpoint
+            response = client.get("/webhook/whatsapp/active-users")
 
-                # Verify response
-                assert response.status_code == 200
-                data = response.json()
-                assert "active_users" in data
-                assert len(data["active_users"]) == 1
-                assert data["active_users"][0]["username"] == "testuser"
+            # Verify response
+            assert response.status_code == 200
+            data = response.json()
+            assert "active_users" in data
+            assert len(data["active_users"]) == 1
+            assert data["active_users"][0]["username"] == "testuser"
 
     def test_health_endpoint_integration(self, client):
         """Test the /health endpoint through the router"""
@@ -158,71 +158,71 @@ class TestWhatsAppWebhooks:
 
     def test_active_users_endpoint_with_real_user_data(self, client, mock_db):
         """Test with realistic user data structure"""
-        with patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db):
-            with patch(
-                "app.api.whatsapp_webhooks.repository_factory"
-            ) as mock_repo_factory:
-                # Create realistic user objects
-                user1 = create_test_user(
-                    id=1,
-                    username="john_doe",
-                    email="john@example.com",
-                    whatsapp_connected=True,
-                    is_active=True,
-                )
-                user2 = create_test_user(
-                    id=2,
-                    username="jane_smith",
-                    email="jane@example.com",
-                    whatsapp_connected=True,
-                    is_active=False,  # Should still be included as it has WhatsApp connected
-                )
+        with (
+            patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db),
+            patch("app.api.whatsapp_webhooks.repository_factory") as mock_repo_factory,
+        ):
+            # Create realistic user objects
+            user1 = create_test_user(
+                id=1,
+                username="john_doe",
+                email="john@example.com",
+                whatsapp_connected=True,
+                is_active=True,
+            )
+            user2 = create_test_user(
+                id=2,
+                username="jane_smith",
+                email="jane@example.com",
+                whatsapp_connected=True,
+                is_active=False,  # Should still be included as it has WhatsApp connected
+            )
 
-                mock_user_repo = Mock()
-                mock_user_repo.get_active_users_with_whatsapp.return_value = [
-                    user1,
-                    user2,
-                ]
-                mock_repo_factory.get_user_repository.return_value = mock_user_repo
+            mock_user_repo = Mock()
+            mock_user_repo.get_active_users_with_whatsapp.return_value = [
+                user1,
+                user2,
+            ]
+            mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-                # Make request
-                response = client.get("/webhook/whatsapp/active-users")
+            # Make request
+            response = client.get("/webhook/whatsapp/active-users")
 
-                # Verify response
-                assert response.status_code == 200
-                data = response.json()
-                assert len(data["active_users"]) == 2
+            # Verify response
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["active_users"]) == 2
 
-                # Check first user
-                assert data["active_users"][0]["id"] == 1
-                assert data["active_users"][0]["username"] == "john_doe"
-                assert data["active_users"][0]["whatsapp_connected"] is True
-                assert data["active_users"][0]["is_active"] is True
+            # Check first user
+            assert data["active_users"][0]["id"] == 1
+            assert data["active_users"][0]["username"] == "john_doe"
+            assert data["active_users"][0]["whatsapp_connected"] is True
+            assert data["active_users"][0]["is_active"] is True
 
-                # Check second user
-                assert data["active_users"][1]["id"] == 2
-                assert data["active_users"][1]["username"] == "jane_smith"
-                assert data["active_users"][1]["whatsapp_connected"] is True
-                assert data["active_users"][1]["is_active"] is False
+            # Check second user
+            assert data["active_users"][1]["id"] == 2
+            assert data["active_users"][1]["username"] == "jane_smith"
+            assert data["active_users"][1]["whatsapp_connected"] is True
+            assert data["active_users"][1]["is_active"] is False
 
     def test_endpoint_error_handling(self, client, mock_db):
         """Test proper error handling in endpoints"""
-        with patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db):
-            with patch(
-                "app.api.whatsapp_webhooks.repository_factory"
-            ) as mock_repo_factory:
-                # Setup repository to raise an exception
-                mock_user_repo = Mock()
-                mock_user_repo.get_active_users_with_whatsapp.side_effect = Exception(
-                    "Test error"
-                )
-                mock_repo_factory.get_user_repository.return_value = mock_user_repo
+        with (
+            patch("app.api.whatsapp_webhooks.get_db", return_value=mock_db),
+            patch("app.api.whatsapp_webhooks.repository_factory") as mock_repo_factory,
+        ):
+            # Setup repository to raise an exception
+            mock_user_repo = Mock()
+            mock_user_repo.get_active_users_with_whatsapp.side_effect = Exception(
+                "Test error"
+            )
+            mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-                # Make request
-                response = client.get("/webhook/whatsapp/active-users")
+            # Make request
+            response = client.get("/webhook/whatsapp/active-users")
 
-                # Verify error response
-                assert response.status_code == 500
-                data = response.json()
-                assert "detail" in data
-                assert "Test error" in data["detail"]
+            # Verify error response
+            assert response.status_code == 500
+            data = response.json()
+            assert "detail" in data
+            assert "Test error" in data["detail"]

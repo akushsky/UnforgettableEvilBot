@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from prometheus_client import (
     CollectorRegistry,
@@ -236,13 +236,11 @@ class MetricsCollector:
 
         if tokens_used > 0:
             self.openai_tokens_used.labels(
-                model=model, token_type="total"
-            ).inc(  # nosec B106
-                tokens_used
-            )
+                model=model, token_type="total"  # noqa: S106
+            ).inc(tokens_used)
 
     def record_whatsapp_message(
-        self, chat_type: str, message_type: str, importance: Optional[int] = None
+        self, chat_type: str, message_type: str, importance: int | None = None
     ):
         """Record WhatsApp message metric"""
         self.whatsapp_messages_total.labels(
@@ -269,7 +267,7 @@ class MetricsCollector:
         """Record error metric"""
         self.errors_total.labels(error_type=error_type, module=module).inc()
 
-    def update_system_metrics(self, metrics: Dict[str, Any]):
+    def update_system_metrics(self, metrics: dict[str, Any]):
         """Update system metrics"""
         if "active_users" in metrics:
             self.active_users.set(metrics["active_users"])
@@ -310,7 +308,7 @@ class MetricsCollector:
         """Get metrics in Prometheus format"""
         return generate_latest(self.registry)
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics including hit ratios"""
         memory_total = self.memory_cache_hits + self.memory_cache_misses
         redis_total = self.redis_cache_hits + self.redis_cache_misses

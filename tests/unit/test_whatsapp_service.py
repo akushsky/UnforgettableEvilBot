@@ -1,7 +1,7 @@
 import os
 import signal
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 from app.whatsapp.service import WhatsAppService
@@ -232,7 +232,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_success(self):
         """Test successful message retrieval"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids = ["chat1", "chat2"]
 
         # Mock responses for each chat
@@ -291,7 +291,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_http_error(self):
         """Test message retrieval with HTTP error"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids = ["chat1"]
 
         mock_response = Mock()
@@ -305,7 +305,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_exception(self):
         """Test message retrieval with exception"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids = ["chat1"]
 
         self.service.http_client.get = AsyncMock(side_effect=Exception("Network error"))
@@ -316,7 +316,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_filter_by_time(self):
         """Test message filtering by time"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids = ["chat1"]
 
         mock_response = Mock()
@@ -433,7 +433,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_empty_chat_ids(self):
         """Test message retrieval with empty chat IDs"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids: list[str] = []
 
         result = await self.service.get_new_messages(123, chat_ids, since)
@@ -445,7 +445,7 @@ class TestWhatsAppService:
 
     async def test_get_new_messages_mixed_responses(self):
         """Test message retrieval with mixed success/failure responses"""
-        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        since = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         chat_ids = ["chat1", "chat2"]
 
         # First chat succeeds, second fails

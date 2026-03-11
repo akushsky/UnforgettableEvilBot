@@ -71,7 +71,7 @@ class LocalDevelopmentServer:
 
         return existing_processes
 
-    def kill_existing_processes(self, force=False):  # noqa: C901
+    def kill_existing_processes(self, force=False):
         """Kill existing system processes"""
         self.log("🔍 Scanning for existing processes...")
         existing = self.find_existing_processes()

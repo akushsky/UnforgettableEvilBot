@@ -141,11 +141,7 @@ class TestBridgeConfiguration:
         ]
 
         for env_value, expected in test_cases:
-            if env_value is None:
-                bridge = MockBridge()  # Uses default
-            else:
-                bridge = MockBridge(env_value)  # Pass URL directly
-
+            bridge = MockBridge() if env_value is None else MockBridge(env_value)
             assert bridge.pythonBackendUrl == expected
 
     def test_bridge_url_validation(self):

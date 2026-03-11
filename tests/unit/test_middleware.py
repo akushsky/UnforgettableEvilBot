@@ -24,7 +24,7 @@ class TestCircuitBreaker:
         assert self.circuit_breaker.name == "test_circuit"
         assert self.circuit_breaker.failure_threshold == 3
         assert self.circuit_breaker.recovery_timeout == 10
-        assert self.circuit_breaker.expected_exception == Exception
+        assert self.circuit_breaker.expected_exception is Exception
         assert self.circuit_breaker.failure_count == 0
         assert self.circuit_breaker.success_count == 0
         assert self.circuit_breaker.last_failure_time is None

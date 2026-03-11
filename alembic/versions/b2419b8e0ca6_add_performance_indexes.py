@@ -5,15 +5,16 @@ Revises: 49d95ee9b45d
 Create Date: 2025-08-21 13:54:17.102671
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op  # type: ignore[attr-defined]
 
 # revision identifiers, used by Alembic.
 revision: str = "b2419b8e0ca6"
-down_revision: Union[str, None] = "49d95ee9b45d"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "49d95ee9b45d"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

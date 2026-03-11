@@ -1,5 +1,4 @@
 import re
-from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -14,10 +13,7 @@ class SecurityValidators:
             return False
 
         # Only letters, numbers, underscores and hyphens
-        if not re.match(r"^[a-zA-Z0-9_-]+$", username):
-            return False
-
-        return True
+        return bool(re.match(r"^[a-zA-Z0-9_-]+$", username))
 
     @staticmethod
     def validate_email(email: str) -> bool:
@@ -27,10 +23,7 @@ class SecurityValidators:
 
         # Simple email format check
         email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(email_pattern, email):
-            return False
-
-        return True
+        return bool(re.match(email_pattern, email))
 
     @staticmethod
     def validate_password_strength(password: str) -> bool:
@@ -114,7 +107,7 @@ class SecureMessageInput(BaseModel):
     """Secure model for incoming messages"""
 
     content: str
-    chat_name: Optional[str] = None
+    chat_name: str | None = None
 
     @field_validator("content")
     @classmethod
@@ -151,12 +144,7 @@ def validate_api_key(api_key: str) -> bool:
     if not api_key or len(api_key) < 10:
         return False
 
-    # Check the format of the OpenAI API key
-    if api_key.startswith("sk-") and len(api_key) > 20:
-        return True
-
-    # Check the format of the Telegram Bot Token
-    if ":" in api_key and len(api_key) > 30:
-        return True
-
-    return False
+    # Check the format of the OpenAI API key or Telegram Bot Token
+    return (api_key.startswith("sk-") and len(api_key) > 20) or (
+        ":" in api_key and len(api_key) > 30
+    )

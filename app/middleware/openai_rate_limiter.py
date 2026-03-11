@@ -1,6 +1,5 @@
 import asyncio
 import time
-from typing import List
 
 from config.logging_config import get_logger
 
@@ -23,7 +22,7 @@ class OpenAIRateLimiter:
         """
         self.requests_per_minute = requests_per_minute
         self.requests_per_hour = requests_per_hour
-        self.request_times: List[float] = []
+        self.request_times: list[float] = []
         self._lock = asyncio.Lock()
 
     async def check_rate_limit(self) -> bool:

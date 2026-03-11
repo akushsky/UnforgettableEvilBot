@@ -1,8 +1,9 @@
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Dict, TypeVar
+from typing import Any, TypeVar
 
 import redis
 
@@ -34,7 +35,7 @@ def serialize_for_cache(obj: Any) -> Any:
             return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
     elif hasattr(obj, "isoformat"):  # datetime objects
         return obj.isoformat()
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, list | tuple):
         return [serialize_for_cache(item) for item in obj]
     elif isinstance(obj, dict):
         return {k: serialize_for_cache(v) for k, v in obj.items()}
@@ -66,7 +67,7 @@ class CacheManager:
 
     def _generate_key(self, prefix: str, *args, **kwargs) -> str:
         """Generate a cache key based on arguments"""
-        key_data = f"{prefix}:{str(args)}:{str(sorted(kwargs.items()))}"
+        key_data = f"{prefix}:{args!s}:{sorted(kwargs.items())!s}"
         return hashlib.sha256(key_data.encode()).hexdigest()
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -88,12 +89,14 @@ class CacheManager:
             # Then the in-memory cache
             if key in self._memory_cache:
                 # Check TTL
-                if key in self._memory_cache_ttl:
-                    if time.time() > self._memory_cache_ttl[key]:
-                        del self._memory_cache[key]
-                        del self._memory_cache_ttl[key]
-                        self._record_cache_operation("miss", "memory", False)
-                        return default
+                if (
+                    key in self._memory_cache_ttl
+                    and time.time() > self._memory_cache_ttl[key]
+                ):
+                    del self._memory_cache[key]
+                    del self._memory_cache_ttl[key]
+                    self._record_cache_operation("miss", "memory", False)
+                    return default
                 # Record cache hit
                 self._record_cache_operation("get", "memory", True)
                 return self._memory_cache[key]
@@ -173,7 +176,7 @@ class CacheManager:
             else:
                 # Simple prefix-based cleanup for memory cache
                 keys_to_delete = [
-                    k for k in self._memory_cache.keys() if k.startswith(pattern[:-1])
+                    k for k in self._memory_cache if k.startswith(pattern[:-1])
                 ]
                 for key in keys_to_delete:
                     del self._memory_cache[key]
@@ -186,9 +189,9 @@ class CacheManager:
             self.logger.error(f"Error clearing cache: {e}")
             return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
-        stats: Dict[str, Any] = {
+        stats: dict[str, Any] = {
             "memory_cache_size": len(self._memory_cache),
             "memory_cache_ttl_size": len(self._memory_cache_ttl),
             "redis_available": self._redis_client is not None,

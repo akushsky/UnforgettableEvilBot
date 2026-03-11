@@ -1,7 +1,8 @@
 import inspect
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Optional, Type
+from typing import Any
 
 from config.logging_config import get_logger
 
@@ -24,7 +25,7 @@ class CircuitBreaker:
         name: str,
         failure_threshold: int = 5,  # Number of errors to open circuit
         recovery_timeout: int = 60,  # Time in seconds before recovery attempt
-        expected_exception: Type[Exception] = Exception,
+        expected_exception: type[Exception] = Exception,
     ):
         """Initialize circuit breaker.
 
@@ -41,7 +42,7 @@ class CircuitBreaker:
 
         self.failure_count = 0
         self.success_count = 0
-        self.last_failure_time: Optional[float] = None
+        self.last_failure_time: float | None = None
         self.state = CircuitBreakerState.CLOSED
 
     def _should_attempt_reset(self) -> bool:

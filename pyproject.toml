@@ -240,6 +240,12 @@ ignore = [
 "alembic/*" = ["E501", "F401", "W291"]
 "app/whatsapp/service.py" = ["S603", "S607"]
 "app/auth/admin_auth.py" = ["S105"]
+"db_utils.py" = ["S603", "S605", "S607"]
+"debug_db.py" = ["B018"]
+"scripts/*" = ["S603"]
+"setup_database.py" = ["S603"]
+"start_local.py" = ["S603", "S607", "S110", "B007", "SIM103"]
+"test_whatsapp_poc.py" = ["S106", "W293", "F401", "F841"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "config", "tests"]

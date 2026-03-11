@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, EmailStr
 
@@ -15,9 +14,9 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     """UserUpdate class."""
 
-    username: Optional[str] = None
-    email: Optional[EmailStr] = None
-    digest_interval_hours: Optional[int] = None
+    username: str | None = None
+    email: EmailStr | None = None
+    digest_interval_hours: int | None = None
 
 
 class UserResponse(BaseModel):
@@ -28,7 +27,7 @@ class UserResponse(BaseModel):
     email: str
     is_active: bool
     whatsapp_connected: bool
-    telegram_channel_id: Optional[str] = None
+    telegram_channel_id: str | None = None
     digest_interval_hours: int
     created_at: datetime
 
@@ -88,7 +87,7 @@ class WhatsAppConnectionWebhook(BaseModel):
 
     userId: str
     timestamp: datetime
-    clientInfo: Optional[dict] = None
+    clientInfo: dict | None = None
 
 
 class WhatsAppMessageWebhook(BaseModel):
@@ -97,12 +96,12 @@ class WhatsAppMessageWebhook(BaseModel):
     userId: str
     messageId: str
     chatId: str
-    chatName: Optional[str] = ""
+    chatName: str | None = ""
     chatType: str = "unknown"
-    sender: Optional[str] = None
-    content: Optional[str] = ""
+    sender: str | None = None
+    content: str | None = ""
     timestamp: str
     importance: int = 2
     hasMedia: bool = False
-    fromMe: Optional[bool] = None
-    type: Optional[str] = None
+    fromMe: bool | None = None
+    type: str | None = None

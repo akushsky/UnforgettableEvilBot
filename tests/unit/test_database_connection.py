@@ -1,3 +1,4 @@
+import contextlib
 from unittest.mock import Mock, patch
 
 import pytest
@@ -95,10 +96,8 @@ class TestDatabaseConnection:
         mock_session_local.assert_called_once()
 
         # Simulate successful completion
-        try:
+        with contextlib.suppress(StopIteration):
             next(db_gen)
-        except StopIteration:
-            pass
 
         mock_session.close.assert_called_once()
 
@@ -118,10 +117,8 @@ class TestDatabaseConnection:
         with pytest.raises(SQLAlchemyError):
             db.some_operation()
             # Complete the generator to trigger the exception handling
-            try:
+            with contextlib.suppress(StopIteration):
                 next(db_gen)
-            except StopIteration:
-                pass
 
         # Just verify that the session was created
         mock_session_local.assert_called_once()
@@ -147,9 +144,8 @@ class TestDatabaseConnection:
         # Simulate an exception
         mock_session.some_operation.side_effect = SQLAlchemyError("Database error")
 
-        with pytest.raises(SQLAlchemyError):
-            with get_db_session() as db:
-                db.some_operation()
+        with pytest.raises(SQLAlchemyError), get_db_session() as db:
+            db.some_operation()
 
         mock_session.rollback.assert_called_once()
         mock_session.close.assert_called_once()
