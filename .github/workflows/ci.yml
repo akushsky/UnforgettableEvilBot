@@ -85,6 +85,8 @@ jobs:
           OPENAI_API_KEY: "test-key"
           DATABASE_URL: "sqlite:///test.db"
           ADMIN_PASSWORD: "test-admin-password"
+          TELEGRAM_BOT_TOKEN: "test-bot-token"
+          SECRET_KEY: "test-secret-key"
 
   test-integration:
     name: Integration Tests
