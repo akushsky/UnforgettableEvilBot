@@ -40,7 +40,7 @@ services:
       - USE_OPTIMIZED_REPOSITORIES=true
 
       # OpenAI settings
-      - OPENAI_MODEL=gpt-5-mini
+      - OPENAI_MODEL=gpt-4o-mini
       - OPENAI_MAX_TOKENS=1000
       - OPENAI_TEMPERATURE=0.3
 
