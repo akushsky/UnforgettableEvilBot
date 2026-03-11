@@ -39,6 +39,10 @@ class OpenAIMonitor:
             "input": 0.00015,
             "output": 0.0006,
         },  # $0.15 / 1M input, $0.60 / 1M output
+        "gpt-5-mini": {
+            "input": 0.00025,
+            "output": 0.002,
+        },  # $0.25 / 1M input, $2.00 / 1M output
         "gpt-4": {
             "input": 0.03,
             "output": 0.06,
@@ -347,7 +351,12 @@ class OpenAIMonitor:
             for model, count in self.metrics.requests_by_model.items()
         }
 
+        recent_errors = sum(
+            1 for req in self.recent_requests[-10:] if not req.get("success", True)
+        )
+
         return {
+            "recent_errors": recent_errors,
             "total_requests": self.metrics.total_requests,
             "total_tokens": self.metrics.total_tokens,
             "total_cost_usd": round(self.metrics.total_cost_usd, 6),
