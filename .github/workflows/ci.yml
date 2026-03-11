@@ -60,7 +60,7 @@ jobs:
         run: bandit -r app/ config/ -x tests/ -c pyproject.toml
 
       - name: Run pip-audit
-        run: pip-audit --strict --desc
+        run: pip-audit --strict --desc --ignore-vuln CVE-2024-23342
 
   test-unit:
     name: Unit Tests

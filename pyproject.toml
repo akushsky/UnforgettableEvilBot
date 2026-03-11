@@ -28,12 +28,12 @@ classifiers = [
 include = ["app*", "config*"]
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi==0.116.1",
+    "fastapi==0.120.0",
     "uvicorn[standard]==0.35.0",
     "sqlalchemy==2.0.43",
     "alembic==1.16.4",
     "psycopg2-binary==2.9.10",
-    "python-multipart==0.0.20",
+    "python-multipart==0.0.22",
     "python-jose[cryptography]==3.5.0",
     "passlib[bcrypt]==1.7.4",
     "python-dotenv==1.1.1",
