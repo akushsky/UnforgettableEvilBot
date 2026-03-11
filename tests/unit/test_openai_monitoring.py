@@ -1,7 +1,18 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 from app.core.openai_monitoring import OpenAIMetrics, OpenAIMonitor
+
+
+def _mock_db_session(mock_db):
+    """Create a mock context manager that yields mock_db."""
+
+    @contextmanager
+    def _ctx():
+        yield mock_db
+
+    return _ctx
 
 
 class TestOpenAIMetrics:
@@ -104,23 +115,20 @@ class TestOpenAIMonitor:
         ) * 0.0006
         assert cost == expected_cost
 
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.repository_factory")
     def test_load_from_database_success(
-        self, mock_repository_factory, mock_session_local
+        self, mock_repository_factory, mock_get_db_session
     ):
         """Test loading metrics from database successfully"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Mock repository
         mock_repository = Mock()
         mock_repository_factory.get_openai_metrics_repository.return_value = (
             mock_repository
         )
 
-        # Mock database metrics
         mock_db_metric = Mock()
         mock_db_metric.model = "gpt-4"
         mock_db_metric.input_tokens = 100
@@ -133,10 +141,8 @@ class TestOpenAIMonitor:
 
         mock_repository.get_all_metrics_ordered.return_value = [mock_db_metric]
 
-        # Create new monitor to trigger _load_from_database
         monitor = OpenAIMonitor()
 
-        # Verify metrics were loaded
         assert monitor.metrics.total_requests == 1
         assert monitor.metrics.total_tokens == 150
         assert monitor.metrics.total_cost_usd == 0.01
@@ -145,48 +151,37 @@ class TestOpenAIMonitor:
         assert "gpt-4" in monitor.metrics.requests_by_model
         assert monitor.metrics.requests_by_model["gpt-4"] == 1
 
-        mock_db.close.assert_called_once()
-
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.repository_factory")
     def test_load_from_database_no_data(
-        self, mock_repository_factory, mock_session_local
+        self, mock_repository_factory, mock_get_db_session
     ):
         """Test loading metrics from database with no data"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Mock repository
         mock_repository = Mock()
         mock_repository_factory.get_openai_metrics_repository.return_value = (
             mock_repository
         )
 
-        # Mock empty database
         mock_repository.get_all_metrics_ordered.return_value = []
 
-        # Create new monitor to trigger _load_from_database
         monitor = OpenAIMonitor()
 
-        # Verify metrics are still at initial state
         assert monitor.metrics.total_requests == 0
         assert monitor.metrics.total_tokens == 0
         assert monitor.metrics.total_cost_usd == 0.0
 
-        mock_db.close.assert_called_once()
-
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.repository_factory")
     def test_load_from_database_exception(
-        self, mock_repository_factory, mock_session_local
+        self, mock_repository_factory, mock_get_db_session
     ):
         """Test loading metrics from database with exception"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Mock repository to raise exception
         mock_repository = Mock()
         mock_repository_factory.get_openai_metrics_repository.return_value = (
             mock_repository
@@ -195,32 +190,24 @@ class TestOpenAIMonitor:
             "Database error"
         )
 
-        # Create new monitor to trigger _load_from_database
         monitor = OpenAIMonitor()
 
-        # Verify metrics are still at initial state
         assert monitor.metrics.total_requests == 0
         assert monitor.metrics.total_tokens == 0
         assert monitor.metrics.total_cost_usd == 0.0
 
-        mock_db.close.assert_called_once()
-
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.datetime")
-    def test_record_request_success(self, mock_datetime, mock_session_local):
+    def test_record_request_success(self, mock_datetime, mock_get_db_session):
         """Test recording a successful request"""
-        # Mock datetime
         now = datetime.utcnow()
         mock_datetime.utcnow.return_value = now
 
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Record a successful request
         self.monitor.record_request("gpt-4", 100, 50, success=True)
 
-        # Verify global metrics
         assert self.monitor.metrics.total_requests == 1
         assert self.monitor.metrics.total_tokens == 150
         assert self.monitor.metrics.successful_requests == 1
@@ -229,7 +216,6 @@ class TestOpenAIMonitor:
         assert "gpt-4" in self.monitor.metrics.requests_by_model
         assert self.monitor.metrics.requests_by_model["gpt-4"] == 1
 
-        # Verify daily metrics
         day_key = now.strftime("%Y-%m-%d")
         assert day_key in self.monitor.daily_metrics
         daily = self.monitor.daily_metrics[day_key]
@@ -237,7 +223,6 @@ class TestOpenAIMonitor:
         assert daily.total_tokens == 150
         assert daily.successful_requests == 1
 
-        # Verify hourly metrics
         hour_key = now.strftime("%Y-%m-%d-%H")
         assert hour_key in self.monitor.hourly_metrics
         hourly = self.monitor.hourly_metrics[hour_key]
@@ -245,7 +230,6 @@ class TestOpenAIMonitor:
         assert hourly.total_tokens == 150
         assert hourly.successful_requests == 1
 
-        # Verify recent requests
         assert len(self.monitor.recent_requests) == 1
         recent_request = self.monitor.recent_requests[0]
         assert recent_request["model"] == "gpt-4"
@@ -253,34 +237,26 @@ class TestOpenAIMonitor:
         assert recent_request["success"]
         assert recent_request["error"] is None
 
-        # Verify database was called
         mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
-        mock_db.close.assert_called_once()
 
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.datetime")
-    def test_record_request_failure(self, mock_datetime, mock_session_local):
+    def test_record_request_failure(self, mock_datetime, mock_get_db_session):
         """Test recording a failed request"""
-        # Mock datetime
         now = datetime.utcnow()
         mock_datetime.utcnow.return_value = now
 
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Record a failed request
         error_message = "API rate limit exceeded"
         self.monitor.record_request("gpt-4", 100, 0, success=False, error=error_message)
 
-        # Verify global metrics
         assert self.monitor.metrics.total_requests == 1
         assert self.monitor.metrics.total_tokens == 100
         assert self.monitor.metrics.successful_requests == 0
         assert self.monitor.metrics.failed_requests == 1
 
-        # Verify recent requests
         assert len(self.monitor.recent_requests) == 1
         recent_request = self.monitor.recent_requests[0]
         assert recent_request["model"] == "gpt-4"
@@ -288,29 +264,23 @@ class TestOpenAIMonitor:
         assert recent_request["success"] is False
         assert recent_request["error"] == error_message
 
-    @patch("app.core.openai_monitoring.SessionLocal")
+    @patch("app.core.openai_monitoring.get_db_session")
     @patch("app.core.openai_monitoring.datetime")
-    def test_record_request_database_exception(self, mock_datetime, mock_session_local):
+    def test_record_request_database_exception(
+        self, mock_datetime, mock_get_db_session
+    ):
         """Test recording request when database fails"""
-        # Mock datetime
         now = datetime.utcnow()
         mock_datetime.utcnow.return_value = now
 
-        # Mock database session to raise exception
         mock_db = Mock()
         mock_db.add.side_effect = Exception("Database error")
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.side_effect = _mock_db_session(mock_db)
 
-        # Record a request (should not raise exception)
         self.monitor.record_request("gpt-4", 100, 50, success=True)
 
-        # Verify metrics were still updated
         assert self.monitor.metrics.total_requests == 1
         assert self.monitor.metrics.total_tokens == 150
-
-        # Verify database rollback was called
-        mock_db.rollback.assert_called_once()
-        mock_db.close.assert_called_once()
 
     @patch("app.core.openai_monitoring.datetime")
     def test_record_request_recent_requests_limit(self, mock_datetime):
@@ -320,7 +290,7 @@ class TestOpenAIMonitor:
         mock_datetime.utcnow.return_value = now
 
         # Record 12 requests
-        for i in range(12):
+        for _ in range(12):
             self.monitor.record_request("gpt-4", 100, 50, success=True)
 
         # Verify only 10 recent requests are kept

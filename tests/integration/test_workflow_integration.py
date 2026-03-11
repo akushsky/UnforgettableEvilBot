@@ -572,14 +572,20 @@ class TestEndToEndWorkflow:
         health_checker = HealthChecker()
 
         with (
-            patch("app.health.checks.SessionLocal") as mock_session_local,
+            patch("app.health.checks.get_db_session") as mock_get_db_session,
             patch("app.health.checks.redis.Redis") as mock_redis,
             patch("builtins.__import__") as mock_import,
         ):
-            # Mock database session
+            from contextlib import contextmanager
+
             mock_db = MagicMock()
             mock_db.execute.return_value.fetchone.return_value = [1]
-            mock_session_local.return_value = mock_db
+
+            @contextmanager
+            def _cm():
+                yield mock_db
+
+            mock_get_db_session.return_value = _cm()
 
             # Mock Redis
             mock_redis_instance = MagicMock()

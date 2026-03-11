@@ -1,13 +1,34 @@
+from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 from app.scheduler.digest_scheduler import DigestScheduler
 
 
+def _mock_db_cm(mock_db):
+    """Helper: return a context manager that yields mock_db."""
+
+    @contextmanager
+    def _cm():
+        yield mock_db
+
+    return _cm
+
+
+def _make_scheduler():
+    """Create a DigestScheduler with mock services to avoid DI calls."""
+    return DigestScheduler(
+        openai_service=Mock(),
+        telegram_service=Mock(),
+        whatsapp_service=Mock(),
+        whatsapp_official_service=Mock(),
+    )
+
+
 class TestDigestScheduler:
     def setup_method(self):
         """Set up test fixtures"""
-        self.scheduler = DigestScheduler()
+        self.scheduler = _make_scheduler()
 
     def test_initialization(self):
         """Test scheduler initialization"""
@@ -48,12 +69,11 @@ class TestDigestScheduler:
 
     @patch("app.scheduler.digest_scheduler.cleanup_service")
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_run_daily_cleanup_success(
-        self, mock_session_local, mock_repo_factory, mock_cleanup_service
+        self, mock_get_db_session, mock_repo_factory, mock_cleanup_service
     ):
         """Test successful daily cleanup"""
-        # Mock cleanup results
         mock_cleanup_service.run_full_cleanup = AsyncMock(
             return_value={
                 "messages": {"messages_deleted": 10, "users_processed": 5},
@@ -62,225 +82,182 @@ class TestDigestScheduler:
             }
         )
 
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_users = [Mock(telegram_channel_id="test_channel")]
         mock_user_repo.get_active_users_with_telegram.return_value = mock_users
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock telegram service
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.run_daily_cleanup()
 
         mock_cleanup_service.run_full_cleanup.assert_called_once()
         self.scheduler.telegram_service.send_notification.assert_called_once()
-        mock_db.close.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.cleanup_service")
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_run_daily_cleanup_failure(
-        self, mock_session_local, mock_repo_factory, mock_cleanup_service
+        self, mock_get_db_session, mock_repo_factory, mock_cleanup_service
     ):
         """Test daily cleanup with failure"""
-        # Mock cleanup failure
         mock_cleanup_service.run_full_cleanup = AsyncMock(
             return_value={"error": "Cleanup failed"}
         )
 
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_admin = Mock(telegram_channel_id="admin_channel")
         mock_user_repo.get_by_id.return_value = mock_admin
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock telegram service
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.run_daily_cleanup()
 
         mock_cleanup_service.run_full_cleanup.assert_called_once()
-        # Should send error notification
         self.scheduler.telegram_service.send_notification.assert_called_once()
-        mock_db.close.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_send_cleanup_notification_success(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test successful cleanup notification"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_users = [Mock(telegram_channel_id="test_channel")]
         mock_user_repo.get_active_users_with_telegram.return_value = mock_users
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock telegram service
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.send_cleanup_notification(10, 3, 2, 5)
 
         self.scheduler.telegram_service.send_notification.assert_called_once()
-        mock_db.close.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_send_cleanup_notification_no_users(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test cleanup notification with no users"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
-        # Mock user repository with no users
         mock_user_repo = Mock()
         mock_user_repo.get_active_users_with_telegram.return_value = []
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock telegram service
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.send_cleanup_notification(10, 3, 2, 5)
 
-        # Should not send any messages
         self.scheduler.telegram_service.send_notification.assert_not_called()
-        mock_db.close.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_send_cleanup_error_notification_success(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test successful cleanup error notification"""
-        # Mock database session
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_admin = Mock(telegram_channel_id="admin_channel")
         mock_user_repo.get_by_id.return_value = mock_admin
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock telegram service
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.send_cleanup_error_notification("Test error")
 
         self.scheduler.telegram_service.send_notification.assert_called_once()
-        mock_db.close.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_process_all_users_success(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test processing all users successfully"""
-        # Mock database sessions
         mock_db = Mock()
         mock_user_db = Mock()
-        mock_session_local.side_effect = [mock_db, mock_user_db]
+        mock_get_db_session.side_effect = [
+            _mock_db_cm(mock_db)(),
+            _mock_db_cm(mock_user_db)(),
+        ]
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
-        mock_user_repo.get_active_users_with_telegram.return_value = mock_users
+        mock_user_repo.get_active_users_with_preferences.return_value = mock_users
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
-
-        # Mock digest repository
-        mock_digest_repo = Mock()
-        mock_digest_repo.should_create_digest.return_value = False
-        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
         with patch.object(self.scheduler, "should_create_digest", return_value=False):
             await self.scheduler.process_all_users()
 
-        mock_db.close.assert_called_once()
-        mock_user_db.close.assert_called_once()
-
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_process_all_users_with_digest_creation(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test processing users with digest creation"""
-        # Mock database sessions
         mock_db = Mock()
         mock_user_db = Mock()
-        mock_session_local.side_effect = [mock_db, mock_user_db]
+        mock_get_db_session.side_effect = [
+            _mock_db_cm(mock_db)(),
+            _mock_db_cm(mock_user_db)(),
+        ]
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
-        mock_user_repo.get_active_users_with_telegram.return_value = mock_users
+        mock_user_repo.get_active_users_with_preferences.return_value = mock_users
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock digest repository
-        mock_digest_repo = Mock()
-        mock_digest_repo.should_create_digest.return_value = True
-        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
-
-        with patch.object(self.scheduler, "should_create_digest", return_value=True):
-            with patch.object(
+        with (
+            patch.object(self.scheduler, "should_create_digest", return_value=True),
+            patch.object(
                 self.scheduler, "create_and_send_digest"
-            ) as mock_create_digest:
-                await self.scheduler.process_all_users()
+            ) as mock_create_digest,
+        ):
+            await self.scheduler.process_all_users()
 
-                mock_create_digest.assert_called_once()
-
-        mock_db.close.assert_called_once()
-        mock_user_db.close.assert_called_once()
+            mock_create_digest.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
-    @patch("app.scheduler.digest_scheduler.SessionLocal")
+    @patch("app.scheduler.digest_scheduler.get_db_session")
     async def test_process_all_users_with_error(
-        self, mock_session_local, mock_repo_factory
+        self, mock_get_db_session, mock_repo_factory
     ):
         """Test processing users with error handling"""
-        # Mock database sessions
         mock_db = Mock()
         mock_user_db = Mock()
-        mock_session_local.side_effect = [mock_db, mock_user_db]
+        mock_get_db_session.side_effect = [
+            _mock_db_cm(mock_db)(),
+            _mock_db_cm(mock_user_db)(),
+        ]
 
-        # Mock user repository
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
-        mock_user_repo.get_active_users_with_telegram.return_value = mock_users
+        mock_user_repo.get_active_users_with_preferences.return_value = mock_users
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
-        # Mock digest repository
-        mock_digest_repo = Mock()
-        mock_digest_repo.should_create_digest.return_value = True
-        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
-
-        with patch.object(self.scheduler, "should_create_digest", return_value=True):
-            with patch.object(
+        with (
+            patch.object(self.scheduler, "should_create_digest", return_value=True),
+            patch.object(
                 self.scheduler,
                 "create_and_send_digest",
                 side_effect=Exception("Digest error"),
-            ):
-                await self.scheduler.process_all_users()
-
-                # Should handle error gracefully
-                mock_user_db.rollback.assert_called_once()
-                mock_user_db.close.assert_called_once()
-
-        mock_db.close.assert_called_once()
+            ),
+        ):
+            await self.scheduler.process_all_users()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_should_create_digest(self, mock_repo_factory):

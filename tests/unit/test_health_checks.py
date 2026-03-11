@@ -10,34 +10,43 @@ class TestHealthChecker:
         """Set up test fixtures"""
         self.health_checker = HealthChecker()
 
-    @patch("app.health.checks.SessionLocal")
-    async def test_check_database_success(self, mock_session_local):
+    @patch("app.health.checks.get_db_session")
+    async def test_check_database_success(self, mock_get_db_session):
         """Test successful database health check"""
-        # Mock database session
+        from contextlib import contextmanager
+
         mock_db = Mock()
-        mock_session_local.return_value = mock_db
+
+        @contextmanager
+        def _cm():
+            yield mock_db
+
+        mock_get_db_session.return_value = _cm()
 
         result = await self.health_checker.check_database()
 
         assert result["status"] == "healthy"
         assert result["error"] is None
         mock_db.execute.assert_called_once()
-        mock_db.close.assert_called_once()
 
-    @patch("app.health.checks.SessionLocal")
-    async def test_check_database_failure(self, mock_session_local):
+    @patch("app.health.checks.get_db_session")
+    async def test_check_database_failure(self, mock_get_db_session):
         """Test database health check with failure"""
-        # Mock database session to raise exception
+        from contextlib import contextmanager
+
         mock_db = Mock()
         mock_db.execute.side_effect = Exception("Database connection failed")
-        mock_session_local.return_value = mock_db
+
+        @contextmanager
+        def _cm():
+            yield mock_db
+
+        mock_get_db_session.return_value = _cm()
 
         result = await self.health_checker.check_database()
 
         assert result["status"] == "unhealthy"
         assert result["error"] == "Database connection failed"
-        # The close() method is not called when an exception occurs in the try block
-        mock_db.close.assert_not_called()
 
     @patch("app.health.checks.redis")
     @patch("app.health.checks.settings")
@@ -89,20 +98,18 @@ class TestHealthChecker:
         mock_redis.from_url.assert_called_once_with("redis://localhost:6379")
         mock_redis_client.ping.assert_called_once()
 
-    @patch("app.health.checks.OpenAIService")
+    @patch("app.health.checks.get_openai_service")
     @patch("app.health.checks.settings")
-    async def test_check_openai_success(self, mock_settings, mock_openai_service):
+    async def test_check_openai_success(self, mock_settings, mock_get_openai):
         """Test successful OpenAI health check"""
-        # Mock settings
         mock_settings.OPENAI_API_KEY = "test-api-key"
 
-        # Mock OpenAI service
         mock_service = Mock()
         mock_circuit_breaker = Mock()
         mock_circuit_breaker.state.value = "closed"
         mock_circuit_breaker.failure_count = 0
         mock_service.circuit_breaker = mock_circuit_breaker
-        mock_openai_service.return_value = mock_service
+        mock_get_openai.return_value = mock_service
 
         result = await self.health_checker.check_openai()
 
@@ -110,22 +117,20 @@ class TestHealthChecker:
         assert result["error"] is None
         assert result["circuit_breaker_state"] == "closed"
         assert result["failure_count"] == 0
-        mock_openai_service.assert_called_once()
+        mock_get_openai.assert_called_once()
 
-    @patch("app.health.checks.OpenAIService")
+    @patch("app.health.checks.get_openai_service")
     @patch("app.health.checks.settings")
-    async def test_check_openai_degraded(self, mock_settings, mock_openai_service):
+    async def test_check_openai_degraded(self, mock_settings, mock_get_openai):
         """Test OpenAI health check with degraded status"""
-        # Mock settings
         mock_settings.OPENAI_API_KEY = "test-api-key"
 
-        # Mock OpenAI service with open circuit breaker
         mock_service = Mock()
         mock_circuit_breaker = Mock()
         mock_circuit_breaker.state.value = "open"
         mock_circuit_breaker.failure_count = 5
         mock_service.circuit_breaker = mock_circuit_breaker
-        mock_openai_service.return_value = mock_service
+        mock_get_openai.return_value = mock_service
 
         result = await self.health_checker.check_openai()
 
@@ -133,88 +138,78 @@ class TestHealthChecker:
         assert result["error"] is None
         assert result["circuit_breaker_state"] == "open"
         assert result["failure_count"] == 5
-        mock_openai_service.assert_called_once()
+        mock_get_openai.assert_called_once()
 
-    @patch("app.health.checks.OpenAIService")
+    @patch("app.health.checks.get_openai_service")
     @patch("app.health.checks.settings")
-    async def test_check_openai_not_configured(
-        self, mock_settings, mock_openai_service
-    ):
+    async def test_check_openai_not_configured(self, mock_settings, mock_get_openai):
         """Test OpenAI health check when not configured"""
-        # Mock settings with no API key
         mock_settings.OPENAI_API_KEY = None
 
         result = await self.health_checker.check_openai()
 
         assert result["status"] == "not_configured"
         assert result["error"] == "OpenAI API key not configured"
-        mock_openai_service.assert_not_called()
+        mock_get_openai.assert_not_called()
 
-    @patch("app.health.checks.OpenAIService")
+    @patch("app.health.checks.get_openai_service")
     @patch("app.health.checks.settings")
-    async def test_check_openai_failure(self, mock_settings, mock_openai_service):
+    async def test_check_openai_failure(self, mock_settings, mock_get_openai):
         """Test OpenAI health check with failure"""
-        # Mock settings
         mock_settings.OPENAI_API_KEY = "test-api-key"
 
-        # Mock OpenAI service to raise exception
-        mock_openai_service.side_effect = Exception("OpenAI service failed")
+        mock_get_openai.side_effect = Exception("OpenAI service failed")
 
         result = await self.health_checker.check_openai()
 
         assert result["status"] == "unhealthy"
         assert result["error"] == "OpenAI service failed"
-        mock_openai_service.assert_called_once()
+        mock_get_openai.assert_called_once()
 
-    @patch("app.health.checks.TelegramService")
+    @patch("app.health.checks.get_telegram_service")
     @patch("app.health.checks.settings")
-    async def test_check_telegram_success(self, mock_settings, mock_telegram_service):
+    async def test_check_telegram_success(self, mock_settings, mock_get_telegram):
         """Test successful Telegram health check"""
-        # Mock settings
         mock_settings.TELEGRAM_BOT_TOKEN = "test-bot-token"
 
-        # Mock Telegram service
         mock_service = Mock()
         mock_bot = Mock()
         mock_service.bot = mock_bot
-        mock_telegram_service.return_value = mock_service
+        mock_get_telegram.return_value = mock_service
 
         result = await self.health_checker.check_telegram()
 
         assert result["status"] == "healthy"
         assert result["error"] is None
-        mock_telegram_service.assert_called_once()
+        mock_get_telegram.assert_called_once()
 
-    @patch("app.health.checks.TelegramService")
+    @patch("app.health.checks.get_telegram_service")
     @patch("app.health.checks.settings")
     async def test_check_telegram_not_configured(
-        self, mock_settings, mock_telegram_service
+        self, mock_settings, mock_get_telegram
     ):
         """Test Telegram health check when not configured"""
-        # Mock settings with no bot token
         mock_settings.TELEGRAM_BOT_TOKEN = None
 
         result = await self.health_checker.check_telegram()
 
         assert result["status"] == "not_configured"
         assert result["error"] == "Telegram bot token not configured"
-        mock_telegram_service.assert_not_called()
+        mock_get_telegram.assert_not_called()
 
-    @patch("app.health.checks.TelegramService")
+    @patch("app.health.checks.get_telegram_service")
     @patch("app.health.checks.settings")
-    async def test_check_telegram_failure(self, mock_settings, mock_telegram_service):
+    async def test_check_telegram_failure(self, mock_settings, mock_get_telegram):
         """Test Telegram health check with failure"""
-        # Mock settings
         mock_settings.TELEGRAM_BOT_TOKEN = "test-bot-token"
 
-        # Mock Telegram service to raise exception
-        mock_telegram_service.side_effect = Exception("Telegram service failed")
+        mock_get_telegram.side_effect = Exception("Telegram service failed")
 
         result = await self.health_checker.check_telegram()
 
         assert result["status"] == "unhealthy"
         assert result["error"] == "Telegram service failed"
-        mock_telegram_service.assert_called_once()
+        mock_get_telegram.assert_called_once()
 
     @patch("builtins.__import__")
     @patch("app.health.checks.settings")

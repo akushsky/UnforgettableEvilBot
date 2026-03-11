@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.core.base_service import BaseService, ServiceMixin
+from app.core.base_service import BaseService
 
 
 class TestBaseService:
@@ -95,83 +95,3 @@ class TestBaseService:
 
         result = await self.service.validate_input(123)
         assert result is False
-
-
-class TestServiceMixin:
-    def setup_method(self):
-        """Set up test fixtures"""
-        self.mixin = ServiceMixin()
-
-    def test_initialization(self):
-        """Test mixin initialization"""
-        assert self.mixin.logger is not None
-        assert hasattr(self.mixin, "logger")
-
-    def test_safe_execute_success(self):
-        """Test safe execution of function with success"""
-
-        def test_func(a, b):
-            return a + b
-
-        result = self.mixin.safe_execute(test_func, 2, 3)
-
-        assert result == 5
-
-    def test_safe_execute_exception(self):
-        """Test safe execution of function with exception"""
-
-        def test_func(a, b):
-            raise ValueError("Test error")
-
-        with patch.object(self.mixin.logger, "error") as mock_logger:
-            with pytest.raises(ValueError, match="Test error"):
-                self.mixin.safe_execute(test_func, 2, 3)
-
-            mock_logger.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_safe_async_execute_success(self):
-        """Test safe execution of async function with success"""
-
-        async def test_async_func(a, b):
-            return a * b
-
-        result = await self.mixin.safe_async_execute(test_async_func, 4, 5)
-
-        assert result == 20
-
-    @pytest.mark.asyncio
-    async def test_safe_async_execute_exception(self):
-        """Test safe execution of async function with exception"""
-
-        async def test_async_func(a, b):
-            raise RuntimeError("Async test error")
-
-        with patch.object(self.mixin.logger, "error") as mock_logger:
-            with pytest.raises(RuntimeError, match="Async test error"):
-                await self.mixin.safe_async_execute(test_async_func, 4, 5)
-
-            mock_logger.assert_called_once()
-
-    def test_safe_execute_with_kwargs(self):
-        """Test safe execution with keyword arguments"""
-
-        def test_func(a, b, multiplier=1):
-            return (a + b) * multiplier
-
-        result = self.mixin.safe_execute(test_func, 2, 3, multiplier=2)
-
-        assert result == 10
-
-    @pytest.mark.asyncio
-    async def test_safe_async_execute_with_kwargs(self):
-        """Test safe async execution with keyword arguments"""
-
-        async def test_async_func(a, b, multiplier=1):
-            return (a + b) * multiplier
-
-        result = await self.mixin.safe_async_execute(
-            test_async_func, 2, 3, multiplier=3
-        )
-
-        assert result == 15
