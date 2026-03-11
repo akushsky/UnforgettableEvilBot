@@ -298,13 +298,13 @@ class OpenAIMonitor:
         recent_24h_requests = sum(
             daily.total_requests
             for day_key, daily in self.daily_metrics.items()
-            if datetime.strptime(day_key, "%Y-%m-%d") >= yesterday
+            if datetime.strptime(day_key, "%Y-%m-%d").replace(tzinfo=UTC) >= yesterday
         )
 
         recent_cost = sum(
             daily.total_cost_usd
             for day_key, daily in self.daily_metrics.items()
-            if datetime.strptime(day_key, "%Y-%m-%d") >= yesterday
+            if datetime.strptime(day_key, "%Y-%m-%d").replace(tzinfo=UTC) >= yesterday
         )
 
         # Calculate hourly rate (last hour)
@@ -312,7 +312,8 @@ class OpenAIMonitor:
         hourly_requests: int = sum(
             hourly.total_requests
             for hour_key, hourly in self.hourly_metrics.items()
-            if datetime.strptime(hour_key, "%Y-%m-%d-%H") >= last_hour
+            if datetime.strptime(hour_key, "%Y-%m-%d-%H").replace(tzinfo=UTC)
+            >= last_hour
         )
 
         # Calculate average tokens per request
@@ -397,7 +398,7 @@ class OpenAIMonitor:
         old_days = [
             day_key
             for day_key in self.daily_metrics
-            if datetime.strptime(day_key, "%Y-%m-%d") < cutoff_date
+            if datetime.strptime(day_key, "%Y-%m-%d").replace(tzinfo=UTC) < cutoff_date
         ]
         for day_key in old_days:
             del self.daily_metrics[day_key]
@@ -407,7 +408,8 @@ class OpenAIMonitor:
         old_hours = [
             hour_key
             for hour_key in self.hourly_metrics
-            if datetime.strptime(hour_key, "%Y-%m-%d-%H") < cutoff_hour
+            if datetime.strptime(hour_key, "%Y-%m-%d-%H").replace(tzinfo=UTC)
+            < cutoff_hour
         ]
         for hour_key in old_hours:
             del self.hourly_metrics[hour_key]

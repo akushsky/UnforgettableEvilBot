@@ -310,7 +310,9 @@ class TestDigestScheduler:
     ):
         """Test successful digest creation and sending"""
         # Mock user and database session
-        mock_user = Mock(username="test_user", id=1, digest_interval_hours=24)
+        mock_user = Mock(
+            username="test_user", id=1, digest_interval_hours=24, digest_preference=None
+        )
         mock_db = Mock()
 
         # Mock datetime

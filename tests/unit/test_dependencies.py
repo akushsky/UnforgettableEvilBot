@@ -15,6 +15,10 @@ from app.dependencies import (
 class TestGetOpenAIService:
     """Tests for get_openai_service provider."""
 
+    def setup_method(self):
+        """Clear lru_cache before each test to avoid stale cached instances."""
+        get_openai_service.cache_clear()
+
     def teardown_method(self):
         """Clear lru_cache between tests to avoid singleton leakage."""
         get_openai_service.cache_clear()
@@ -46,6 +50,9 @@ class TestGetOpenAIService:
 class TestGetTelegramService:
     """Tests for get_telegram_service provider."""
 
+    def setup_method(self):
+        get_telegram_service.cache_clear()
+
     def teardown_method(self):
         """Clear lru_cache between tests."""
         get_telegram_service.cache_clear()
@@ -76,6 +83,9 @@ class TestGetTelegramService:
 
 class TestGetWhatsAppService:
     """Tests for get_whatsapp_service provider."""
+
+    def setup_method(self):
+        get_whatsapp_service.cache_clear()
 
     def teardown_method(self):
         """Clear lru_cache between tests."""
@@ -119,6 +129,9 @@ class TestGetWhatsAppService:
 
 class TestGetWhatsAppOfficialService:
     """Tests for get_whatsapp_official_service provider."""
+
+    def setup_method(self):
+        get_whatsapp_official_service.cache_clear()
 
     def teardown_method(self):
         """Clear lru_cache between tests."""

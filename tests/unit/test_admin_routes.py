@@ -32,7 +32,7 @@ def client(mock_db):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
-    with TestClient(app) as test_client:
+    with TestClient(app, follow_redirects=False) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
