@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.base_service import BaseService
 from app.middleware.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
@@ -78,7 +78,7 @@ class OpenAIService(BaseService):
             )
             return 3  # Return average value on error
 
-    async def create_digest(self, messages: List[Dict]) -> str:
+    async def create_digest(self, messages: list[dict]) -> str:
         """Create digest using Circuit Breaker and Rate Limiting"""
 
         async def _create():
@@ -97,7 +97,7 @@ class OpenAIService(BaseService):
             self.logger.error(f"Error creating digest (with circuit breaker): {e}")
             return "❌ Digest temporarily unavailable due to AI service issues. Please try later."
 
-    async def create_digest_by_chats(self, chat_messages: Dict[str, List[Dict]]) -> str:
+    async def create_digest_by_chats(self, chat_messages: dict[str, list[dict]]) -> str:
         """Create digest grouped by chats using Circuit Breaker and Rate Limiting"""
 
         async def _create():
@@ -135,7 +135,7 @@ class OpenAIService(BaseService):
         """Validate input data"""
         return await self.analyzer.validate_input(data)
 
-    def get_service_status(self) -> Dict:
+    def get_service_status(self) -> dict:
         """Get service status"""
         return {
             "circuit_breaker_state": self.circuit_breaker.state,

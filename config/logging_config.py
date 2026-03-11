@@ -8,7 +8,6 @@ import logging.handlers
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .settings import settings
 
@@ -325,4 +324,4 @@ def log_api_call(
 
 
 # Global variable for context filter access
-request_context_filter: Optional[RequestContextFilter] = None
+request_context_filter: RequestContextFilter | None = None

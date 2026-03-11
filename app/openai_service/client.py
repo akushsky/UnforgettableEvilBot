@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import openai
 
@@ -24,9 +24,9 @@ class OpenAIClient(BaseService):
     async def make_request(
         self,
         prompt: str,
-        model: Optional[str] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Execute request to OpenAI API"""
         # Use settings defaults if not provided
@@ -90,6 +90,4 @@ class OpenAIClient(BaseService):
 
     async def validate_input(self, data: Any) -> bool:
         """Validate input data for OpenAI"""
-        if isinstance(data, str) and len(data) > 0:
-            return True
-        return False
+        return bool(isinstance(data, str) and len(data) > 0)

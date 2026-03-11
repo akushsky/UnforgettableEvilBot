@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.base_service import BaseService
 from app.openai_service.client import OpenAIClient
@@ -48,7 +48,7 @@ class MessageAnalyzer(BaseService):
         Answer only with a number from 1 to 5.
         """
 
-    def _build_digest_prompt(self, messages: List[Dict]) -> str:
+    def _build_digest_prompt(self, messages: list[dict]) -> str:
         """Build prompt for digest creation"""
         messages_text = ""
         for msg in messages:
@@ -66,7 +66,7 @@ class MessageAnalyzer(BaseService):
         """
 
     def _build_digest_by_chats_prompt(
-        self, chat_messages: Dict[str, List[Dict]]
+        self, chat_messages: dict[str, list[dict]]
     ) -> str:
         """Build prompt for digest creation grouped by chats"""
         chat_sections = ""
@@ -141,7 +141,7 @@ class MessageAnalyzer(BaseService):
 
         return importance
 
-    async def create_digest(self, messages: List[Dict]) -> str:
+    async def create_digest(self, messages: list[dict]) -> str:
         """Create digest from messages"""
         if not messages:
             return "📋 Нет новых важных сообщений для дайджеста."
@@ -155,7 +155,7 @@ class MessageAnalyzer(BaseService):
         self.log_operation("digest_creation", {"messages_count": len(messages)})
         return digest
 
-    async def create_digest_by_chats(self, chat_messages: Dict[str, List[Dict]]) -> str:
+    async def create_digest_by_chats(self, chat_messages: dict[str, list[dict]]) -> str:
         """Create digest grouped by chats"""
         if not chat_messages:
             return "📋 Нет новых важных сообщений для дайджеста."
