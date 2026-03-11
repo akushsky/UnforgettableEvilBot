@@ -187,8 +187,10 @@ class AlertManager:
         self.add_rule(
             AlertRule(
                 name="external_service_down",
-                condition=lambda data: not data.get("openai_available", True)
-                or not data.get("telegram_available", True),
+                condition=lambda data: (
+                    not data.get("openai_available", True)
+                    or not data.get("telegram_available", True)
+                ),
                 severity=AlertSeverity.CRITICAL,
                 title="External Service Unavailable",
                 message_template="External services unavailable: OpenAI={openai_available}, Telegram={telegram_available}",

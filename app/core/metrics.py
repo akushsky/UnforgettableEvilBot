@@ -236,7 +236,8 @@ class MetricsCollector:
 
         if tokens_used > 0:
             self.openai_tokens_used.labels(
-                model=model, token_type="total"  # noqa: S106
+                model=model,
+                token_type="total",  # noqa: S106
             ).inc(tokens_used)
 
     def record_whatsapp_message(

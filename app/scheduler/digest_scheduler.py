@@ -145,7 +145,7 @@ class DigestScheduler:
 • Системных логов удалено: {logs_deleted}
 • Пользователей обработано: {users_processed}
 
-⏰ Время: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC"""
+⏰ Время: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")} UTC"""
 
             with get_db_session() as db:
                 users = repository_factory.get_user_repository().get_active_users_with_telegram(
@@ -173,7 +173,7 @@ class DigestScheduler:
 🔍 **Детали ошибки:**
 {error_message}
 
-⏰ Время: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+⏰ Время: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")} UTC
 
 ⚠️ Рекомендуется проверить логи системы."""
 
