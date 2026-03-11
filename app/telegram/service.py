@@ -1,14 +1,13 @@
-import logging
 import ssl
-from typing import Dict, Optional
 
 from telegram import Bot
 from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
+from config.logging_config import get_logger
 from config.settings import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TelegramService:
@@ -20,13 +19,13 @@ class TelegramService:
     Use only for debugging or in controlled environments.
     """
 
-    def __init__(self, disable_ssl_verify: Optional[bool] = None):
+    def __init__(self, disable_ssl_verify: bool | None = None):
         """Init  .
 
         Args:
             disable_ssl_verify: Description of disable_ssl_verify.
         """
-        self._bot: Optional[Bot] = None
+        self._bot: Bot | None = None
         if disable_ssl_verify is None:
             disable_ssl_verify = not settings.TELEGRAM_SSL_VERIFY
         self.disable_ssl_verify = disable_ssl_verify
@@ -144,7 +143,7 @@ class TelegramService:
             logger.error(f"Telegram bot health check failed: {e}")
             return False
 
-    async def create_channel_for_user(self, user_name: str) -> Dict:
+    async def create_channel_for_user(self, user_name: str) -> dict:
         """Helper for creating a channel (instructions for the user)"""
         return {
             "instructions": [
@@ -171,10 +170,11 @@ class TelegramService:
         try:
             bot_info = await self.bot.get_me()
             return bot_info.username or "unknown_bot"
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get bot username: {e}")
             return "unknown_bot"
 
-    async def verify_channel_access(self, channel_id: str) -> Dict:
+    async def verify_channel_access(self, channel_id: str) -> dict:
         """Check the bot's access to the channel"""
         try:
             chat = await self.bot.get_chat(chat_id=channel_id)
@@ -205,7 +205,7 @@ class TelegramService:
                 ],
             }
 
-    async def get_channel_statistics(self, channel_id: str) -> Dict:
+    async def get_channel_statistics(self, channel_id: str) -> dict:
         """Get channel statistics"""
         try:
             chat = await self.bot.get_chat(chat_id=channel_id)
@@ -222,7 +222,7 @@ class TelegramService:
         except TelegramError as e:
             return {"success": False, "error": str(e)}
 
-    async def send_formatted_digest(self, channel_id: str, digest_data: Dict) -> bool:
+    async def send_formatted_digest(self, channel_id: str, digest_data: dict) -> bool:
         """Send a formatted digest with additional information"""
         try:
             header = "📱 *WhatsApp Дайджест*\n"

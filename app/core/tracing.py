@@ -5,8 +5,8 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from config.logging_config import get_logger
 
@@ -21,12 +21,12 @@ class TraceSpan:
     trace_id: str
     operation_name: str
     start_time: float
-    end_time: Optional[float] = None
-    duration: Optional[float] = None
-    tags: Dict[str, Any] = field(default_factory=dict)
-    logs: List[Dict[str, Any]] = field(default_factory=list)
-    parent_span_id: Optional[str] = None
-    error: Optional[str] = None
+    end_time: float | None = None
+    duration: float | None = None
+    tags: dict[str, Any] = field(default_factory=dict)
+    logs: list[dict[str, Any]] = field(default_factory=list)
+    parent_span_id: str | None = None
+    error: str | None = None
     status: str = "active"  # active, completed, error
 
 
@@ -40,16 +40,16 @@ class TraceContext:
             trace_id: Description of trace_id.
         """
         self.trace_id = trace_id
-        self.spans: Dict[str, TraceSpan] = {}
-        self.current_span_id: Optional[str] = None
+        self.spans: dict[str, TraceSpan] = {}
+        self.current_span_id: str | None = None
         self.start_time = time.time()
-        self.end_time: Optional[float] = None
+        self.end_time: float | None = None
 
     def add_span(self, span: TraceSpan):
         """Add span to context"""
         self.spans[span.span_id] = span
 
-    def get_span(self, span_id: str) -> Optional[TraceSpan]:
+    def get_span(self, span_id: str) -> TraceSpan | None:
         """Get span by ID"""
         return self.spans.get(span_id)
 
@@ -57,7 +57,7 @@ class TraceContext:
         """Set current active span"""
         self.current_span_id = span_id
 
-    def get_current_span(self) -> Optional[TraceSpan]:
+    def get_current_span(self) -> TraceSpan | None:
         """Get current active span"""
         if self.current_span_id:
             return self.spans.get(self.current_span_id)
@@ -72,7 +72,7 @@ class TraceContext:
         end_time = self.end_time or time.time()
         return end_time - self.start_time
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert trace to dictionary"""
         return {
             "trace_id": self.trace_id,
@@ -90,12 +90,12 @@ class TraceManager:
     def __init__(self):
         """Init  ."""
         self.logger = get_logger(__name__)
-        self.active_traces: Dict[str, TraceContext] = {}
-        self.completed_traces: List[TraceContext] = []
+        self.active_traces: dict[str, TraceContext] = {}
+        self.completed_traces: list[TraceContext] = []
         self.max_completed_traces = 1000  # Maximum number of saved traces
         self._lock = threading.Lock()
 
-    def create_trace(self, trace_id: Optional[str] = None) -> TraceContext:
+    def create_trace(self, trace_id: str | None = None) -> TraceContext:
         """Create new trace"""
         if not trace_id:
             trace_id = str(uuid.uuid4())
@@ -108,7 +108,7 @@ class TraceManager:
         self.logger.debug(f"Created trace: {trace_id}")
         return trace_context
 
-    def get_trace(self, trace_id: str) -> Optional[TraceContext]:
+    def get_trace(self, trace_id: str) -> TraceContext | None:
         """Get trace by ID"""
         with self._lock:
             return self.active_traces.get(trace_id)
@@ -133,7 +133,7 @@ class TraceManager:
         self,
         trace_id: str,
         operation_name: str,
-        parent_span_id: Optional[str] = None,
+        parent_span_id: str | None = None,
         **tags,
     ) -> TraceSpan:
         """Create a new span"""
@@ -155,7 +155,7 @@ class TraceManager:
         self.logger.debug(f"Created span: {span_id} for operation: {operation_name}")
         return span
 
-    def complete_span(self, span_id: str, error: Optional[str] = None, **tags):
+    def complete_span(self, span_id: str, error: str | None = None, **tags):
         """Finish a span"""
         # Look for the span in all active traces
         for trace in self.active_traces.values():
@@ -178,7 +178,7 @@ class TraceManager:
             span = trace.get_span(span_id)
             if span:
                 log_entry = {
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "level": level,
                     "message": message,
                     **fields,
@@ -186,7 +186,7 @@ class TraceManager:
                 span.logs.append(log_entry)
                 break
 
-    def get_trace_summary(self, trace_id: str) -> Optional[Dict[str, Any]]:
+    def get_trace_summary(self, trace_id: str) -> dict[str, Any] | None:
         """Get a trace summary"""
         trace = self.get_trace(trace_id)
         if trace:
@@ -199,7 +199,7 @@ class TraceManager:
 
         return None
 
-    def get_recent_traces(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_traces(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get the latest traces"""
         recent_traces = []
 
@@ -216,7 +216,7 @@ class TraceManager:
 
         return recent_traces[:limit]
 
-    def export_trace(self, trace_id: str) -> Optional[str]:
+    def export_trace(self, trace_id: str) -> str | None:
         """Export trace to JSON"""
         trace_data = self.get_trace_summary(trace_id)
         if trace_data:
@@ -248,7 +248,7 @@ def trace_operation(operation_name: str):
             if not trace_id:
                 trace_context = trace_manager.create_trace()
                 trace_id = trace_context.trace_id
-                setattr(threading.current_thread(), "_trace_id", trace_id)
+                threading.current_thread()._trace_id = trace_id  # type: ignore[attr-defined]
 
             # Create a span
             span = trace_manager.create_span(trace_id, operation_name)
@@ -269,7 +269,7 @@ def trace_operation(operation_name: str):
             if not trace_id:
                 trace_context = trace_manager.create_trace()
                 trace_id = trace_context.trace_id
-                setattr(threading.current_thread(), "_trace_id", trace_id)
+                threading.current_thread()._trace_id = trace_id  # type: ignore[attr-defined]
 
             # Create a span
             span = trace_manager.create_span(trace_id, operation_name)
@@ -298,7 +298,7 @@ async def trace_span(operation_name: str, **tags):
     if not trace_id:
         trace_context = trace_manager.create_trace()
         trace_id = trace_context.trace_id
-        setattr(threading.current_thread(), "_trace_id", trace_id)
+        threading.current_thread()._trace_id = trace_id  # type: ignore[attr-defined]
 
     span = trace_manager.create_span(trace_id, operation_name, **tags)
 
@@ -317,7 +317,7 @@ def trace_span_sync(operation_name: str, **tags):
     if not trace_id:
         trace_context = trace_manager.create_trace()
         trace_id = trace_context.trace_id
-        setattr(threading.current_thread(), "_trace_id", trace_id)
+        threading.current_thread()._trace_id = trace_id  # type: ignore[attr-defined]
 
     span = trace_manager.create_span(trace_id, operation_name, **tags)
 
@@ -331,10 +331,10 @@ def trace_span_sync(operation_name: str, **tags):
 
 def set_trace_context(trace_id: str):
     """Set tracing context for the current thread"""
-    setattr(threading.current_thread(), "_trace_id", trace_id)
+    threading.current_thread()._trace_id = trace_id  # type: ignore[attr-defined]
 
 
-def get_current_trace_id() -> Optional[str]:
+def get_current_trace_id() -> str | None:
     """Get the current trace ID"""
     return getattr(threading.current_thread(), "_trace_id", None)
 

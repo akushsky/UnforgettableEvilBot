@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-from typing import Dict, List
+from datetime import UTC, datetime, timedelta
 
 import psutil
 from sqlalchemy.orm import Session
@@ -28,7 +27,7 @@ class ResourceSavingsService:
         period_start: datetime,
         period_end: datetime,
         reason: str = "user_suspended",
-    ) -> Dict:
+    ) -> dict:
         """Calculate resource savings for a specific user over a time period."""
         try:
             # Get user info
@@ -138,11 +137,11 @@ class ResourceSavingsService:
             self.logger.error(f"Error counting messages for user {user_id}: {e}")
             return 0
 
-    def get_total_savings(self, db: Session, days_back: int = 30) -> Dict:
+    def get_total_savings(self, db: Session, days_back: int = 30) -> dict:
         """Get total resource savings across all suspended users."""
         try:
-            period_start = datetime.utcnow() - timedelta(days=days_back)
-            period_end = datetime.utcnow()
+            period_start = datetime.now(UTC) - timedelta(days=days_back)
+            period_end = datetime.now(UTC)
 
             # Get all savings records in the period
             savings = repository_factory.get_resource_savings_repository().get_savings_in_period(
@@ -180,10 +179,10 @@ class ResourceSavingsService:
 
     def get_savings_by_user(
         self, db: Session, user_id: int, days_back: int = 30
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get savings history for a specific user."""
         try:
-            period_start = datetime.utcnow() - timedelta(days=days_back)
+            period_start = datetime.now(UTC) - timedelta(days=days_back)
 
             savings = repository_factory.get_resource_savings_repository().get_savings_by_user_in_period(
                 db, user_id, period_start
@@ -212,11 +211,11 @@ class ResourceSavingsService:
 
     def record_suspension_savings(
         self, db: Session, user_id: int, suspension_start: datetime
-    ) -> Dict:
+    ) -> dict:
         """Record savings when a user is suspended."""
         try:
             # Calculate savings from suspension start to now
-            period_end = datetime.utcnow()
+            period_end = datetime.now(UTC)
 
             return self.calculate_savings_for_user(
                 db, user_id, suspension_start, period_end, "user_suspended"
@@ -228,7 +227,7 @@ class ResourceSavingsService:
             )
             return {"error": str(e)}
 
-    def get_current_system_savings(self) -> Dict:
+    def get_current_system_savings(self) -> dict:
         """Get current system-wide resource savings estimate."""
         try:
             # Get current system metrics
@@ -242,7 +241,7 @@ class ResourceSavingsService:
                 "current_cpu_usage_percent": cpu_percent,
                 "estimated_memory_saved_mb": 0,  # Would be calculated from suspended users
                 "estimated_cpu_saved_percent": 0,  # Would be calculated from suspended users
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
             return estimated_savings

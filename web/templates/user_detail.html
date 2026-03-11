@@ -137,7 +137,7 @@
                         {% if last_digest %}
                             <div class="d-flex align-items-center">
                                 <div class="me-3">
-                                    {% if last_digest.telegram_sent %}
+                                    {% if last_digest.telegram_sent or last_digest.whatsapp_sent %}
                                         <i class="fas fa-check-circle text-success fa-2x"></i>
                                     {% else %}
                                         <i class="fas fa-times-circle text-danger fa-2x"></i>
@@ -147,8 +147,14 @@
                                     <strong>{{ last_digest.created_at.strftime('%d.%m.%Y %H:%M') }}</strong><br>
                                     <small class="text-muted">
                                         {{ last_digest.message_count }} сообщений
-                                        {% if last_digest.telegram_sent %}
+                                        {% if last_digest.telegram_sent or last_digest.whatsapp_sent %}
                                             • <span class="text-success">✅ Отправлен</span>
+                                            {% if last_digest.telegram_sent %}
+                                                <span class="badge bg-info ms-1">Telegram</span>
+                                            {% endif %}
+                                            {% if last_digest.whatsapp_sent %}
+                                                <span class="badge bg-success ms-1">WhatsApp</span>
+                                            {% endif %}
                                         {% else %}
                                             • <span class="text-danger">❌ Не отправлен</span>
                                         {% endif %}
@@ -398,6 +404,20 @@
                 </div>
                 <div class="modal-body">
                     <div class="mb-3">
+                        <label for="digest_preference_id" class="form-label">
+                            <i class="fas fa-paper-plane"></i> Способ отправки дайджестов
+                        </label>
+                        <select class="form-control" id="digest_preference_id" name="digest_preference_id" onchange="toggleChannelSettings()">
+                            {% for preference in digest_preferences %}
+                                <option value="{{ preference.id }}" {{ "selected" if user.digest_preference_id == preference.id else "" }}>
+                                    {{ preference.display_name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Выберите способ доставки дайджестов</div>
+                    </div>
+
+                    <div id="telegram-settings" class="mb-3" style="display: none;">
                         <label for="telegram_channel_id" class="form-label">
                             <i class="fab fa-telegram"></i> Telegram канал/чат ID
                         </label>
@@ -405,6 +425,30 @@
                                value="{{ user.telegram_channel_id or '' }}" placeholder="@channel или -1001234567890">
                         <div class="form-text">ID канала или чата для отправки дайджестов</div>
                     </div>
+
+                    <div id="whatsapp-settings" class="mb-3" style="display: none;">
+                        <label class="form-label">
+                            <i class="fab fa-whatsapp"></i> WhatsApp номера телефонов
+                        </label>
+                        <div id="whatsapp-phones-list" class="mb-2">
+                            {% for phone in whatsapp_phones %}
+                                <div class="d-flex align-items-center mb-2 phone-item" data-phone-id="{{ phone.id }}">
+                                    <input type="text" class="form-control me-2" name="phone_numbers[]"
+                                           value="{{ phone.phone_number }}" placeholder="+1234567890">
+                                    <input type="text" class="form-control me-2" name="phone_display_names[]"
+                                           value="{{ phone.display_name or '' }}" placeholder="Отображаемое имя">
+                                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="removePhone(this)">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            {% endfor %}
+                        </div>
+                        <button type="button" class="btn btn-outline-success btn-sm" onclick="addPhone()">
+                            <i class="fas fa-plus"></i> Добавить номер
+                        </button>
+                        <div class="form-text">Номера телефонов в международном формате для отправки дайджестов</div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="digest_interval_hours" class="form-label">
                             <i class="fas fa-clock"></i> Интервал дайджеста (часы)
@@ -1425,6 +1469,48 @@ function viewDigestContent(digestId, content) {
     modal.show();
 }
 
+// Функции для управления настройками каналов
+function toggleChannelSettings() {
+    const preferenceSelect = document.getElementById('digest_preference_id');
+    const selectedOption = preferenceSelect.options[preferenceSelect.selectedIndex];
+    const preferenceName = selectedOption.text.toLowerCase();
+
+    const telegramSettings = document.getElementById('telegram-settings');
+    const whatsappSettings = document.getElementById('whatsapp-settings');
+
+    // Скрываем все настройки
+    telegramSettings.style.display = 'none';
+    whatsappSettings.style.display = 'none';
+
+    // Показываем нужные настройки
+    if (preferenceName.includes('telegram')) {
+        telegramSettings.style.display = 'block';
+    } else if (preferenceName.includes('whatsapp')) {
+        whatsappSettings.style.display = 'block';
+    }
+}
+
+function addPhone() {
+    const phonesList = document.getElementById('whatsapp-phones-list');
+    const phoneItem = document.createElement('div');
+    phoneItem.className = 'd-flex align-items-center mb-2 phone-item';
+    phoneItem.innerHTML = `
+        <input type="text" class="form-control me-2" name="phone_numbers[]"
+               placeholder="+1234567890">
+        <input type="text" class="form-control me-2" name="phone_display_names[]"
+               placeholder="Отображаемое имя">
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removePhone(this)">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+    phonesList.appendChild(phoneItem);
+}
+
+function removePhone(button) {
+    const phoneItem = button.closest('.phone-item');
+    phoneItem.remove();
+}
+
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
     // Загружаем системные настройки при открытии модального окна
@@ -1432,6 +1518,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Обработчик отправки формы системных настроек
     document.getElementById('cleanupSettingsForm').addEventListener('submit', saveCleanupSettings);
+
+    // Инициализируем настройки каналов при загрузке
+    toggleChannelSettings();
 });
 
 // Cleanup intervals при уходе со страницы

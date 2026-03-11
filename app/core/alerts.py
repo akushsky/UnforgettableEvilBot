@@ -1,9 +1,10 @@
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from config.logging_config import get_logger
 
@@ -39,11 +40,11 @@ class Alert:
     source: str
     created_at: datetime
     status: AlertStatus = AlertStatus.ACTIVE
-    acknowledged_at: Optional[datetime] = None
-    resolved_at: Optional[datetime] = None
-    acknowledged_by: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    tags: List[str] = field(default_factory=list)
+    acknowledged_at: datetime | None = None
+    resolved_at: datetime | None = None
+    acknowledged_by: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
 
 
 class AlertRule:
@@ -52,12 +53,12 @@ class AlertRule:
     def __init__(
         self,
         name: str,
-        condition: Callable[[Dict[str, Any]], bool],
+        condition: Callable[[dict[str, Any]], bool],
         severity: AlertSeverity,
         title: str,
         message_template: str,
         cooldown_minutes: int = 5,
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
     ):
         """Initialize alert rule.
 
@@ -77,9 +78,9 @@ class AlertRule:
         self.message_template = message_template
         self.cooldown_minutes = cooldown_minutes
         self.tags = tags or []
-        self.last_triggered: Optional[datetime] = None
+        self.last_triggered: datetime | None = None
 
-    def should_trigger(self, data: Dict[str, Any]) -> bool:
+    def should_trigger(self, data: dict[str, Any]) -> bool:
         """Check if alert should trigger"""
         if not self.condition(data):
             return False
@@ -89,12 +90,12 @@ class AlertRule:
             cooldown_end = self.last_triggered + timedelta(
                 minutes=self.cooldown_minutes
             )
-            if datetime.utcnow() < cooldown_end:
+            if datetime.now(UTC) < cooldown_end:
                 return False
 
         return True
 
-    def create_alert(self, data: Dict[str, Any]) -> Alert:
+    def create_alert(self, data: dict[str, Any]) -> Alert:
         """Create alert based on data"""
         message = self.message_template.format(**data)
 
@@ -104,12 +105,12 @@ class AlertRule:
             message=message,
             severity=self.severity,
             source=self.name,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             tags=self.tags,
             metadata=data,
         )
 
-        self.last_triggered = datetime.utcnow()
+        self.last_triggered = datetime.now(UTC)
         return alert
 
 
@@ -119,9 +120,9 @@ class AlertManager:
     def __init__(self):
         """Initialize the class."""
         self.logger = get_logger(__name__)
-        self.alerts: Dict[str, Alert] = {}
-        self.rules: Dict[str, AlertRule] = {}
-        self.notifiers: List[Callable[[Alert], None]] = []
+        self.alerts: dict[str, Alert] = {}
+        self.rules: dict[str, AlertRule] = {}
+        self.notifiers: list[Callable[[Alert], None]] = []
         self.max_alerts = 1000
 
         # Predefined rules
@@ -222,7 +223,7 @@ class AlertManager:
         self.notifiers.append(notifier)
         self.logger.info(f"Added alert notifier: {notifier.__name__}")
 
-    def check_alerts(self, data: Dict[str, Any]) -> List[Alert]:
+    def check_alerts(self, data: dict[str, Any]) -> list[Alert]:
         """Checking rules and creating alerts"""
         new_alerts = []
 
@@ -258,7 +259,7 @@ class AlertManager:
         if alert_id in self.alerts:
             alert = self.alerts[alert_id]
             alert.status = AlertStatus.ACKNOWLEDGED
-            alert.acknowledged_at = datetime.utcnow()
+            alert.acknowledged_at = datetime.now(UTC)
             alert.acknowledged_by = user
             self.logger.info(f"Alert {alert_id} acknowledged by {user}")
 
@@ -267,12 +268,10 @@ class AlertManager:
         if alert_id in self.alerts:
             alert = self.alerts[alert_id]
             alert.status = AlertStatus.RESOLVED
-            alert.resolved_at = datetime.utcnow()
+            alert.resolved_at = datetime.now(UTC)
             self.logger.info(f"Alert {alert_id} resolved")
 
-    def get_active_alerts(
-        self, severity: Optional[AlertSeverity] = None
-    ) -> List[Alert]:
+    def get_active_alerts(self, severity: AlertSeverity | None = None) -> list[Alert]:
         """Get active alerts"""
         active_alerts = [
             alert
@@ -287,18 +286,18 @@ class AlertManager:
 
         return sorted(active_alerts, key=lambda x: x.created_at, reverse=True)
 
-    def get_alerts_by_severity(self, severity: AlertSeverity) -> List[Alert]:
+    def get_alerts_by_severity(self, severity: AlertSeverity) -> list[Alert]:
         """Get alerts by severity level"""
         return [alert for alert in self.alerts.values() if alert.severity == severity]
 
-    def get_alerts_by_source(self, source: str) -> List[Alert]:
+    def get_alerts_by_source(self, source: str) -> list[Alert]:
         """Get alerts by source"""
         return [alert for alert in self.alerts.values() if alert.source == source]
 
     def _cleanup_old_alerts(self):
         """Cleanup of old alerts"""
         # Delete resolved alerts older than 7 days
-        cutoff_date = datetime.utcnow() - timedelta(days=7)
+        cutoff_date = datetime.now(UTC) - timedelta(days=7)
         alerts_to_remove = [
             alert_id
             for alert_id, alert in self.alerts.items()
@@ -328,11 +327,11 @@ def log_notifier(alert: Alert):
 
 def console_notifier(alert: Alert):
     """Notifier for console output"""
-    print(f"\n🚨 ALERT [{alert.severity.value.upper()}] {alert.title}")
-    print(f"   {alert.message}")
-    print(f"   Source: {alert.source}")
-    print(f"   Time: {alert.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-    print()
+    logger.warning(
+        f"ALERT [{alert.severity.value.upper()}] {alert.title} | "
+        f"{alert.message} | Source: {alert.source} | "
+        f"Time: {alert.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
 
 def json_notifier(alert: Alert):
@@ -347,7 +346,7 @@ def json_notifier(alert: Alert):
         "tags": alert.tags,
         "metadata": alert.metadata,
     }
-    print(json.dumps(alert_data, ensure_ascii=False))
+    logger.info(json.dumps(alert_data, ensure_ascii=False))
 
 
 # Register notifiers
@@ -361,8 +360,8 @@ def create_alert(
     message: str,
     severity: AlertSeverity,
     source: str,
-    tags: Optional[List[str]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Alert:
     """Create an alert manually"""
     alert = Alert(
@@ -371,7 +370,7 @@ def create_alert(
         message=message,
         severity=severity,
         source=source,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
         tags=tags or [],
         metadata=metadata or {},
     )
@@ -382,12 +381,12 @@ def create_alert(
     return alert
 
 
-def check_system_health(data: Dict[str, Any]) -> List[Alert]:
+def check_system_health(data: dict[str, Any]) -> list[Alert]:
     """Check system health and create alerts"""
     return alert_manager.check_alerts(data)
 
 
-def get_system_alerts() -> Dict[str, Any]:
+def get_system_alerts() -> dict[str, Any]:
     """Get system alert summary"""
     active_alerts = alert_manager.get_active_alerts()
 

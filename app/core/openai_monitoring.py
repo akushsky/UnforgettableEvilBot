@@ -1,10 +1,9 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import UTC, datetime, timedelta
 
 from app.core.repository_factory import repository_factory
-from app.database.connection import SessionLocal
+from app.database.connection import get_db_session
 from app.models.database import OpenAIMetrics as OpenAIMetricsDB
 from config.logging_config import get_logger
 
@@ -20,10 +19,10 @@ class OpenAIMetrics:
     total_cost_usd: float = 0.0
     successful_requests: int = 0
     failed_requests: int = 0
-    last_request_time: Optional[datetime] = None
-    requests_by_model: Dict[str, int] = field(default_factory=dict)
-    tokens_by_model: Dict[str, int] = field(default_factory=dict)
-    cost_by_model: Dict[str, float] = field(default_factory=dict)
+    last_request_time: datetime | None = None
+    requests_by_model: dict[str, int] = field(default_factory=dict)
+    tokens_by_model: dict[str, int] = field(default_factory=dict)
+    cost_by_model: dict[str, float] = field(default_factory=dict)
 
 
 class OpenAIMonitor:
@@ -56,9 +55,9 @@ class OpenAIMonitor:
     def __init__(self):
         """Initialize OpenAI monitor"""
         self.metrics = OpenAIMetrics()
-        self.daily_metrics: Dict[str, OpenAIMetrics] = defaultdict(OpenAIMetrics)
-        self.hourly_metrics: Dict[str, OpenAIMetrics] = defaultdict(OpenAIMetrics)
-        self.recent_requests: List[Dict] = []  # Store last 10 requests
+        self.daily_metrics: dict[str, OpenAIMetrics] = defaultdict(OpenAIMetrics)
+        self.hourly_metrics: dict[str, OpenAIMetrics] = defaultdict(OpenAIMetrics)
+        self.recent_requests: list[dict] = []  # Store last 10 requests
 
         # Load existing data from database
         self._load_from_database()
@@ -66,117 +65,108 @@ class OpenAIMonitor:
     def _load_from_database(self):
         """Load existing OpenAI metrics from database"""
         try:
-            db = SessionLocal()
-
-            # Get all metrics from database
-            db_metrics = repository_factory.get_openai_metrics_repository().get_all_metrics_ordered(
-                db
-            )
-
-            if not db_metrics:
-                logger.info("No existing OpenAI metrics found in database")
-                return
-
-            # Reset current metrics
-            self.metrics = OpenAIMetrics()
-            self.daily_metrics.clear()
-            self.hourly_metrics.clear()
-            self.recent_requests = []
-
-            # Process each metric from database
-            for db_metric in db_metrics:
-                # Update global metrics
-                self.metrics.total_requests += 1
-                self.metrics.total_tokens += db_metric.total_tokens
-                self.metrics.total_cost_usd += db_metric.cost_usd
-                self.metrics.last_request_time = db_metric.request_time
-
-                if db_metric.success:
-                    self.metrics.successful_requests += 1
-                else:
-                    self.metrics.failed_requests += 1
-
-                # Update model-specific metrics
-                self.metrics.requests_by_model[db_metric.model] = (
-                    self.metrics.requests_by_model.get(db_metric.model, 0) + 1
-                )
-                self.metrics.tokens_by_model[db_metric.model] = (
-                    self.metrics.tokens_by_model.get(db_metric.model, 0)
-                    + db_metric.total_tokens
-                )
-                self.metrics.cost_by_model[db_metric.model] = (
-                    self.metrics.cost_by_model.get(db_metric.model, 0.0)
-                    + db_metric.cost_usd
+            with get_db_session() as db:
+                db_metrics = repository_factory.get_openai_metrics_repository().get_all_metrics_ordered(
+                    db
                 )
 
-                # Update daily metrics
-                day_key = db_metric.request_time.strftime("%Y-%m-%d")
-                daily = self.daily_metrics[day_key]
-                daily.total_requests += 1
-                daily.total_tokens += db_metric.total_tokens
-                daily.total_cost_usd += db_metric.cost_usd
-                daily.last_request_time = db_metric.request_time
-                if db_metric.success:
-                    daily.successful_requests += 1
-                else:
-                    daily.failed_requests += 1
-                daily.requests_by_model[db_metric.model] = (
-                    daily.requests_by_model.get(db_metric.model, 0) + 1
-                )
-                daily.tokens_by_model[db_metric.model] = (
-                    daily.tokens_by_model.get(db_metric.model, 0)
-                    + db_metric.total_tokens
-                )
-                daily.cost_by_model[db_metric.model] = (
-                    daily.cost_by_model.get(db_metric.model, 0.0) + db_metric.cost_usd
-                )
+                if not db_metrics:
+                    logger.info("No existing OpenAI metrics found in database")
+                    return
 
-                # Update hourly metrics
-                hour_key = db_metric.request_time.strftime("%Y-%m-%d-%H")
-                hourly = self.hourly_metrics[hour_key]
-                hourly.total_requests += 1
-                hourly.total_tokens += db_metric.total_tokens
-                hourly.total_cost_usd += db_metric.cost_usd
-                hourly.last_request_time = db_metric.request_time
-                if db_metric.success:
-                    hourly.successful_requests += 1
-                else:
-                    hourly.failed_requests += 1
-                hourly.requests_by_model[db_metric.model] = (
-                    hourly.requests_by_model.get(db_metric.model, 0) + 1
-                )
-                hourly.tokens_by_model[db_metric.model] = (
-                    hourly.tokens_by_model.get(db_metric.model, 0)
-                    + db_metric.total_tokens
-                )
-                hourly.cost_by_model[db_metric.model] = (
-                    hourly.cost_by_model.get(db_metric.model, 0.0) + db_metric.cost_usd
-                )
+                self.metrics = OpenAIMetrics()
+                self.daily_metrics.clear()
+                self.hourly_metrics.clear()
+                self.recent_requests = []
 
-                # Add to recent requests (only last 10)
-                if len(self.recent_requests) < 10:
-                    request_info = {
-                        "model": db_metric.model,
-                        "tokens": db_metric.total_tokens,
-                        "cost": round(db_metric.cost_usd, 6),
-                        "success": db_metric.success,
-                        "timestamp": db_metric.request_time.isoformat(),
-                        "error": (
-                            db_metric.error_message if not db_metric.success else None
-                        ),
-                    }
-                    self.recent_requests.append(request_info)
+                for db_metric in db_metrics:
+                    self.metrics.total_requests += 1
+                    self.metrics.total_tokens += db_metric.total_tokens
+                    self.metrics.total_cost_usd += db_metric.cost_usd
+                    self.metrics.last_request_time = db_metric.request_time
 
-            # Reverse recent requests to show newest first
-            self.recent_requests.reverse()
+                    if db_metric.success:
+                        self.metrics.successful_requests += 1
+                    else:
+                        self.metrics.failed_requests += 1
 
-            logger.info(f"Loaded {len(db_metrics)} OpenAI metrics from database")
+                    self.metrics.requests_by_model[db_metric.model] = (
+                        self.metrics.requests_by_model.get(db_metric.model, 0) + 1
+                    )
+                    self.metrics.tokens_by_model[db_metric.model] = (
+                        self.metrics.tokens_by_model.get(db_metric.model, 0)
+                        + db_metric.total_tokens
+                    )
+                    self.metrics.cost_by_model[db_metric.model] = (
+                        self.metrics.cost_by_model.get(db_metric.model, 0.0)
+                        + db_metric.cost_usd
+                    )
+
+                    day_key = db_metric.request_time.strftime("%Y-%m-%d")
+                    daily = self.daily_metrics[day_key]
+                    daily.total_requests += 1
+                    daily.total_tokens += db_metric.total_tokens
+                    daily.total_cost_usd += db_metric.cost_usd
+                    daily.last_request_time = db_metric.request_time
+                    if db_metric.success:
+                        daily.successful_requests += 1
+                    else:
+                        daily.failed_requests += 1
+                    daily.requests_by_model[db_metric.model] = (
+                        daily.requests_by_model.get(db_metric.model, 0) + 1
+                    )
+                    daily.tokens_by_model[db_metric.model] = (
+                        daily.tokens_by_model.get(db_metric.model, 0)
+                        + db_metric.total_tokens
+                    )
+                    daily.cost_by_model[db_metric.model] = (
+                        daily.cost_by_model.get(db_metric.model, 0.0)
+                        + db_metric.cost_usd
+                    )
+
+                    hour_key = db_metric.request_time.strftime("%Y-%m-%d-%H")
+                    hourly = self.hourly_metrics[hour_key]
+                    hourly.total_requests += 1
+                    hourly.total_tokens += db_metric.total_tokens
+                    hourly.total_cost_usd += db_metric.cost_usd
+                    hourly.last_request_time = db_metric.request_time
+                    if db_metric.success:
+                        hourly.successful_requests += 1
+                    else:
+                        hourly.failed_requests += 1
+                    hourly.requests_by_model[db_metric.model] = (
+                        hourly.requests_by_model.get(db_metric.model, 0) + 1
+                    )
+                    hourly.tokens_by_model[db_metric.model] = (
+                        hourly.tokens_by_model.get(db_metric.model, 0)
+                        + db_metric.total_tokens
+                    )
+                    hourly.cost_by_model[db_metric.model] = (
+                        hourly.cost_by_model.get(db_metric.model, 0.0)
+                        + db_metric.cost_usd
+                    )
+
+                    if len(self.recent_requests) < 10:
+                        request_info = {
+                            "model": db_metric.model,
+                            "tokens": db_metric.total_tokens,
+                            "cost": round(db_metric.cost_usd, 6),
+                            "success": db_metric.success,
+                            "timestamp": db_metric.request_time.isoformat(),
+                            "error": (
+                                db_metric.error_message
+                                if not db_metric.success
+                                else None
+                            ),
+                        }
+                        self.recent_requests.append(request_info)
+
+                self.recent_requests.reverse()
+
+                logger.info(f"Loaded {len(db_metrics)} OpenAI metrics from database")
 
         except Exception as e:
             logger.error(f"Failed to load OpenAI metrics from database: {e}")
-        finally:
-            if "db" in locals():
-                db.close()
 
     def calculate_cost(
         self, model: str, input_tokens: int, output_tokens: int
@@ -200,10 +190,10 @@ class OpenAIMonitor:
         input_tokens: int,
         output_tokens: int,
         success: bool = True,
-        error: Optional[str] = None,
+        error: str | None = None,
     ):
         """Record an OpenAI API request"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         total_tokens = input_tokens + output_tokens
         cost = self.calculate_cost(model, input_tokens, output_tokens)
 
@@ -277,27 +267,21 @@ class OpenAIMonitor:
         if len(self.recent_requests) > 10:
             self.recent_requests = self.recent_requests[-10:]
 
-        # Save to database for persistence
         try:
-            db = SessionLocal()
-            db_metric = OpenAIMetricsDB(
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                cost_usd=cost,
-                success=success,
-                error_message=error if not success else None,
-                request_time=now,
-            )
-            db.add(db_metric)
-            db.commit()
-            db.close()
+            with get_db_session() as db:
+                db_metric = OpenAIMetricsDB(
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    cost_usd=cost,
+                    success=success,
+                    error_message=error if not success else None,
+                    request_time=now,
+                )
+                db.add(db_metric)
         except Exception as e:
             logger.error(f"Failed to save OpenAI metrics to database: {e}")
-            if "db" in locals():
-                db.rollback()
-                db.close()
 
         # Log the request
         log_message = f"OpenAI request: {model}, tokens: {total_tokens} (in: {input_tokens}, out: {output_tokens}), cost: ${cost:.6f}"
@@ -305,9 +289,9 @@ class OpenAIMonitor:
             log_message += f", error: {error}"
         logger.info(log_message)
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get current OpenAI statistics"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Calculate recent activity (last 24 hours)
         yesterday = now - timedelta(days=1)
@@ -407,22 +391,22 @@ class OpenAIMonitor:
 
     def cleanup_old_data(self, days_to_keep: int = 30):
         """Clean up old metrics data"""
-        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days_to_keep)
 
         # Clean daily metrics
         old_days = [
             day_key
-            for day_key in self.daily_metrics.keys()
+            for day_key in self.daily_metrics
             if datetime.strptime(day_key, "%Y-%m-%d") < cutoff_date
         ]
         for day_key in old_days:
             del self.daily_metrics[day_key]
 
         # Clean hourly metrics (keep last 7 days)
-        cutoff_hour = datetime.utcnow() - timedelta(days=7)
+        cutoff_hour = datetime.now(UTC) - timedelta(days=7)
         old_hours = [
             hour_key
-            for hour_key in self.hourly_metrics.keys()
+            for hour_key in self.hourly_metrics
             if datetime.strptime(hour_key, "%Y-%m-%d-%H") < cutoff_hour
         ]
         for hour_key in old_hours:

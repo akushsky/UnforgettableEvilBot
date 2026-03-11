@@ -1,14 +1,14 @@
 import asyncio
-import logging
 import os
 import signal
 import subprocess
 from datetime import datetime
-from typing import Dict, List, Optional
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from config.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class WhatsAppService:
@@ -23,7 +23,7 @@ class WhatsAppService:
         """
         self.session_path = session_path
         self.bridge_url = bridge_url
-        self.bridge_process: Optional[subprocess.Popen] = None
+        self.bridge_process: subprocess.Popen | None = None
         self.is_connected = False
         self.http_client = httpx.AsyncClient()
 
@@ -101,7 +101,7 @@ class WhatsAppService:
             logger.error(f"Failed to initialize WhatsApp client: {e}")
             return False
 
-    async def get_client_status(self, user_id: int) -> Dict:
+    async def get_client_status(self, user_id: int) -> dict:
         """Get client status"""
         try:
             response = await self.http_client.get(
@@ -117,7 +117,7 @@ class WhatsAppService:
             logger.error(f"Failed to get client status: {e}")
             return {"connected": False, "error": str(e)}
 
-    async def get_chats(self, user_id: int) -> List[Dict]:
+    async def get_chats(self, user_id: int) -> list[dict]:
         """Get a list of all user's chats"""
         try:
             response = await self.http_client.get(
@@ -136,8 +136,8 @@ class WhatsAppService:
             return []
 
     async def get_new_messages(
-        self, user_id: int, chat_ids: List[str], since: datetime
-    ) -> List[Dict]:
+        self, user_id: int, chat_ids: list[str], since: datetime
+    ) -> list[dict]:
         """Get new messages from specified chats since a certain time"""
         try:
             all_messages = []
@@ -190,8 +190,8 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Failed to disconnect: {e}")
 
-    def __del__(self):
-        """Cleanup resources when deleting the object"""
+    def close(self):
+        """Explicitly clean up the bridge process."""
         if self.bridge_process:
             try:
                 if os.name != "nt":
@@ -199,6 +199,4 @@ class WhatsAppService:
                 else:
                     self.bridge_process.terminate()
             except Exception as e:
-                logger.warning(
-                    f"Failed to terminate bridge process: {e}"
-                )  # Log the error instead of silently passing
+                logger.warning(f"Failed to terminate bridge process: {e}")

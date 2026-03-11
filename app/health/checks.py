@@ -1,9 +1,8 @@
 import redis
 from sqlalchemy import text
 
-from app.database.connection import SessionLocal
-from app.openai_service.service import OpenAIService
-from app.telegram.service import TelegramService
+from app.database.connection import get_db_session
+from app.dependencies import get_openai_service, get_telegram_service
 from config.logging_config import get_logger
 from config.settings import settings
 
@@ -16,9 +15,8 @@ class HealthChecker:
     async def check_database(self) -> dict:
         """Check database status"""
         try:
-            db = SessionLocal()
-            db.execute(text("SELECT 1"))
-            db.close()
+            with get_db_session() as db:
+                db.execute(text("SELECT 1"))
             return {"status": "healthy", "error": None}
         except Exception as e:
             logger.error(f"Database health check failed: {e}")
@@ -46,15 +44,13 @@ class HealthChecker:
                     "error": "OpenAI API key not configured",
                 }
 
-            openai_service = OpenAIService()
+            openai_service = get_openai_service()
             # Check Circuit Breaker state
             cb_state = openai_service.circuit_breaker.state.value
             failure_count = openai_service.circuit_breaker.failure_count
 
             # Return degraded status for open circuit breaker
-            if cb_state == "open":
-                status = "degraded"
-            elif cb_state == "half_open":
+            if cb_state == "open" or cb_state == "half_open":
                 status = "degraded"
             else:
                 status = "healthy"
@@ -78,9 +74,8 @@ class HealthChecker:
                     "error": "Telegram bot token not configured",
                 }
 
-            telegram_service = TelegramService()
-            # Check that bot can be initialized
-            telegram_service.bot
+            telegram_service = get_telegram_service()
+            _ = telegram_service.bot
             return {"status": "healthy", "error": None}
         except Exception as e:
             logger.error(f"Telegram health check failed: {e}")

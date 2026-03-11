@@ -37,6 +37,9 @@ class User(Base):  # type: ignore[misc,valid-type]
 
     # Digest settings
     digest_interval_hours = Column(Integer, default=4)
+    digest_preference_id = Column(
+        Integer, ForeignKey("digest_preferences.id"), nullable=True
+    )
 
     # User status
     is_active = Column(Boolean, default=True)
@@ -46,6 +49,8 @@ class User(Base):  # type: ignore[misc,valid-type]
     # Relationships
     monitored_chats = relationship("MonitoredChat", back_populates="user")
     digest_logs = relationship("DigestLog", back_populates="user")
+    digest_preference = relationship("DigestPreference", back_populates="users")
+    whatsapp_phones = relationship("WhatsAppPhone", back_populates="user")
 
 
 class MonitoredChat(Base):  # type: ignore[misc,valid-type]
@@ -107,6 +112,8 @@ class DigestLog(Base):  # type: ignore[misc,valid-type]
     message_count = Column(Integer, nullable=False)
     telegram_sent = Column(Boolean, default=False)
     telegram_error = Column(Text, nullable=True)  # New field - sending error
+    whatsapp_sent = Column(Boolean, default=False)
+    whatsapp_error = Column(Text, nullable=True)  # WhatsApp sending error
 
     generation_time_seconds = Column(
         Float, nullable=True
@@ -221,3 +228,41 @@ class ResourceSavings(Base):  # type: ignore[misc,valid-type]
 
     # Relationships
     user = relationship("User")
+
+
+class DigestPreference(Base):  # type: ignore[misc,valid-type]
+    """DigestPreference class for storing available messaging channels."""
+
+    __tablename__ = "digest_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(
+        String(50), unique=True, nullable=False
+    )  # 'telegram', 'whatsapp', etc.
+    display_name = Column(String(100), nullable=False)  # 'Telegram', 'WhatsApp', etc.
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    users = relationship("User", back_populates="digest_preference")
+
+
+class WhatsAppPhone(Base):  # type: ignore[misc,valid-type]
+    """WhatsAppPhone class for storing user's WhatsApp phone numbers."""
+
+    __tablename__ = "whatsapp_phones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    phone_number = Column(String(20), nullable=False)  # International format
+    display_name = Column(String(100), nullable=True)  # Optional display name
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="whatsapp_phones")

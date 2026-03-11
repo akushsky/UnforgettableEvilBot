@@ -1,33 +1,49 @@
 import asyncio
-import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.data_cleanup import cleanup_service
 from app.core.repository_factory import repository_factory
-from app.database.connection import SessionLocal
+from app.database.connection import get_db_session
 from app.models.database import User
 from app.openai_service.service import OpenAIService
 from app.telegram.service import TelegramService
+from app.whatsapp.official_service import WhatsAppOfficialService
 from app.whatsapp.service import WhatsAppService
+from config.logging_config import get_logger
 from config.settings import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DigestScheduler:
-    """DigestScheduler class."""
+    """Schedules and sends periodic digests to users."""
 
-    def __init__(self):
-        """Initialize the class."""
-        self.whatsapp_service = WhatsAppService(settings.WHATSAPP_SESSION_PATH)
-        self.openai_service = OpenAIService()
-        self.telegram_service = TelegramService()
+    def __init__(
+        self,
+        openai_service: OpenAIService | None = None,
+        telegram_service: TelegramService | None = None,
+        whatsapp_service: WhatsAppService | None = None,
+        whatsapp_official_service: WhatsAppOfficialService | None = None,
+    ):
+        from app.dependencies import (
+            get_openai_service,
+            get_telegram_service,
+            get_whatsapp_official_service,
+            get_whatsapp_service,
+        )
+
+        self.openai_service = openai_service or get_openai_service()
+        self.telegram_service = telegram_service or get_telegram_service()
+        self.whatsapp_service = whatsapp_service or get_whatsapp_service()
+        self.whatsapp_official_service = (
+            whatsapp_official_service or get_whatsapp_official_service()
+        )
         self.is_running = False
-        self.last_digest_run = None
-        self.last_cleanup_run = None
+        self.last_digest_run: datetime | None = None
+        self.last_cleanup_run: datetime | None = None
 
     async def start_scheduler(self):
         """Start task scheduler"""
@@ -49,7 +65,7 @@ class DigestScheduler:
         """Daily data cleanup at 3:00 AM"""
         while self.is_running:
             try:
-                now = datetime.utcnow()
+                now = datetime.now(UTC)
                 # Calculate time until next run (3:00 AM)
                 next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
                 if next_run <= now:
@@ -110,7 +126,7 @@ class DigestScheduler:
             await self.send_cleanup_error_notification(str(e))
         finally:
             # Update last cleanup run time
-            self.last_cleanup_run = datetime.utcnow()
+            self.last_cleanup_run = datetime.now(UTC)
 
     async def send_cleanup_notification(
         self,
@@ -129,11 +145,9 @@ class DigestScheduler:
 • Системных логов удалено: {logs_deleted}
 • Пользователей обработано: {users_processed}
 
-⏰ Время: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"""
+⏰ Время: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC"""
 
-            # Send to all active users with configured Telegram channels
-            db = SessionLocal()
-            try:
+            with get_db_session() as db:
                 users = repository_factory.get_user_repository().get_active_users_with_telegram(
                     db
                 )
@@ -148,9 +162,6 @@ class DigestScheduler:
                             f"Failed to send cleanup notification to user {user.username}: {e}"
                         )
 
-            finally:
-                db.close()
-
         except Exception as e:
             logger.error(f"Error sending cleanup notification: {e}")
 
@@ -162,56 +173,42 @@ class DigestScheduler:
 🔍 **Детали ошибки:**
 {error_message}
 
-⏰ Время: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+⏰ Время: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
 
 ⚠️ Рекомендуется проверить логи системы."""
 
-            # Send to administrator
-            db = SessionLocal()
-            try:
+            with get_db_session() as db:
                 admin_user = repository_factory.get_user_repository().get_by_id(
-                    db, 1
-                )  # Assuming user ID 1 is admin
+                    db, settings.ADMIN_USER_ID
+                )
                 if admin_user and admin_user.telegram_channel_id:
                     await self.telegram_service.send_notification(
                         admin_user.telegram_channel_id, message
                     )
-            finally:
-                db.close()
 
         except Exception as e:
             logger.error(f"Error sending cleanup error notification: {e}")
 
     async def process_all_users(self):
         """Processing all users"""
-        db = SessionLocal()
         try:
-            users = (
-                repository_factory.get_user_repository().get_active_users_with_telegram(
+            with get_db_session() as db:
+                users = repository_factory.get_user_repository().get_active_users_with_preferences(
                     db
                 )
-            )
 
-            # Process each user in a separate session
             for user in users:
                 try:
-                    user_db = SessionLocal()  # New session for each user
-                    if await self.should_create_digest(user, user_db):
-                        await self.create_and_send_digest(user, user_db)
-                    user_db.close()
+                    with get_db_session() as user_db:
+                        if await self.should_create_digest(user, user_db):
+                            await self.create_and_send_digest(user, user_db)
                 except Exception as e:
                     logger.error(f"Error processing user {user.username}: {e}")
-                    if "user_db" in locals():
-                        user_db.rollback()
-                        user_db.close()
 
-            # Update last digest run time
-            self.last_digest_run = datetime.utcnow()
+            self.last_digest_run = datetime.now(UTC)
 
         except Exception as e:
             logger.error(f"Error in process_all_users: {e}")
-        finally:
-            db.close()
 
     async def should_create_digest(self, user: User, db: Session) -> bool:
         """Check whether a digest should be created for the user"""
@@ -235,7 +232,7 @@ class DigestScheduler:
 
             # Get unprocessed messages from the database (arrived via webhook)
             # Group messages by chat
-            chat_messages: Dict[str, List[Dict[str, Any]]] = {}
+            chat_messages: dict[str, list[dict[str, Any]]] = {}
             total_important_messages = 0
             processed_message_ids = []
 
@@ -277,17 +274,71 @@ class DigestScheduler:
                 chat_messages
             )
 
-            # Send to Telegram
-            success = await self.telegram_service.send_digest(
-                str(user.telegram_channel_id), digest_content
-            )
+            # Determine delivery method based on user's preference
+            telegram_sent = False
+            whatsapp_sent = False
+            telegram_error = None
+            whatsapp_error = None
+
+            if user.digest_preference:
+                preference_name = user.digest_preference.name
+
+                if preference_name == "telegram":
+                    # Send to Telegram
+                    try:
+                        telegram_sent = await self.telegram_service.send_digest(
+                            str(user.telegram_channel_id), digest_content
+                        )
+                    except Exception as e:
+                        telegram_error = str(e)
+                        logger.error(
+                            f"Failed to send Telegram digest to user {user.username}: {e}"
+                        )
+
+                elif preference_name == "whatsapp":
+                    # Send to WhatsApp
+                    try:
+                        phone_numbers = repository_factory.get_whatsapp_phone_repository().get_phone_numbers_for_user(
+                            db, user.id
+                        )
+                        if phone_numbers:
+                            result = await self.whatsapp_official_service.send_digest_to_multiple_phones(
+                                phone_numbers, digest_content, user.username
+                            )
+                            whatsapp_sent = result["success_count"] > 0
+                            if result["error_count"] > 0:
+                                whatsapp_error = f"Failed to send to {result['error_count']} phone numbers"
+                        else:
+                            whatsapp_error = "No WhatsApp phone numbers configured"
+                            logger.warning(
+                                f"No WhatsApp phone numbers for user {user.username}"
+                            )
+                    except Exception as e:
+                        whatsapp_error = str(e)
+                        logger.error(
+                            f"Failed to send WhatsApp digest to user {user.username}: {e}"
+                        )
+            else:
+                # Fallback to Telegram if no preference is set
+                try:
+                    telegram_sent = await self.telegram_service.send_digest(
+                        str(user.telegram_channel_id), digest_content
+                    )
+                except Exception as e:
+                    telegram_error = str(e)
+                    logger.error(
+                        f"Failed to send fallback Telegram digest to user {user.username}: {e}"
+                    )
 
             # Save the digest log
             digest_log_data = {
                 "user_id": user.id,
                 "digest_content": digest_content,
                 "message_count": total_important_messages,
-                "telegram_sent": success,
+                "telegram_sent": telegram_sent,
+                "telegram_error": telegram_error,
+                "whatsapp_sent": whatsapp_sent,
+                "whatsapp_error": whatsapp_error,
             }
             repository_factory.get_digest_log_repository().create(db, digest_log_data)
 
@@ -313,7 +364,7 @@ class DigestScheduler:
                 "status": "stopped",
             }
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Calculate next digest processing (every 5 minutes from last run)
         if self.last_digest_run:

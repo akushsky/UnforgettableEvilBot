@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from app.core.repository_factory import repository_factory
 from app.core.validators import SecurityValidators
 from app.database.connection import get_db
+from app.dependencies import get_openai_service, get_telegram_service
 from app.models.database import MonitoredChat, User, WhatsAppMessage
 from app.models.schemas import WhatsAppConnectionWebhook, WhatsAppMessageWebhook
-from app.openai_service.service import OpenAIService
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -21,19 +21,14 @@ class WhatsAppReconnectionService:
     async def handle_connection_restored(self, user_id: str, db: Session):
         """Processing connection restoration"""
         try:
-            user = repository_factory.get_user_repository().get_by_id(db, user_id)
+            user = repository_factory.get_user_repository().get_by_id(db, int(user_id))
             if user and user.telegram_channel_id:
-                from app.telegram.service import TelegramService
-
-                telegram_service = TelegramService()
-
+                telegram_service = get_telegram_service()
                 notification = f"✅ WhatsApp подключение восстановлено для пользователя {user.username}"
                 await telegram_service.send_notification(
                     user.telegram_channel_id, notification
                 )
-
                 logger.info(f"Connection restored notification sent for user {user_id}")
-
         except Exception as e:
             logger.error(f"Failed to send reconnection notification: {e}")
 
@@ -65,7 +60,7 @@ def _get_user_id(message: WhatsAppMessageWebhook) -> int:
         return int(message.userId)
     except ValueError:
         logger.warning(f"Invalid user ID format: {message.userId}")
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        raise HTTPException(status_code=400, detail="Invalid user ID format") from None
 
 
 def _validate_user(user_id: int, db: Session) -> User:
@@ -125,8 +120,9 @@ def _parse_timestamp(timestamp: str) -> datetime:
             return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         else:
             return datetime.fromisoformat(timestamp)
-    except Exception:
-        return datetime.utcnow()
+    except Exception as e:
+        logger.warning(f"Failed to parse timestamp '{timestamp}': {e}")
+        return datetime.now(UTC)
 
 
 def _save_message(
@@ -165,9 +161,9 @@ async def receive_whatsapp_message(
 
         # Validate and sanitize input data
         (
-            sanitized_content,
+            _sanitized_content,
             sanitized_chat_name,
-            sanitized_sender,
+            _sanitized_sender,
         ) = _validate_and_sanitize_message(message)
 
         # Validate user
@@ -205,8 +201,8 @@ async def receive_whatsapp_message(
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Error processing message: {str(e)}"
-        )
+            status_code=500, detail=f"Error processing message: {e!s}"
+        ) from e
 
 
 @router.post("/connected")
@@ -223,11 +219,12 @@ async def whatsapp_connected(
 
         logger.info(f"WhatsApp client connected for user {connection.userId}")
 
-        # Update the user's status
-        user = repository_factory.get_user_repository().get_by_id(db, connection.userId)
+        user = repository_factory.get_user_repository().get_by_id(
+            db, int(connection.userId)
+        )
         if user:
             user.whatsapp_connected = True
-            user.whatsapp_last_seen = datetime.utcnow()
+            user.whatsapp_last_seen = datetime.now(UTC)
             user.whatsapp_session_id = f"session_{connection.userId}"
             db.commit()
 
@@ -242,7 +239,7 @@ async def whatsapp_connected(
         raise
     except Exception as e:
         logger.error(f"Error updating connection status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/health")
@@ -273,7 +270,7 @@ async def get_active_users(db: Session = Depends(get_db)):
         }
     except Exception as e:
         logger.error(f"Error getting active users: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/disconnected")
@@ -288,19 +285,16 @@ async def whatsapp_disconnected(
 
         logger.info(f"WhatsApp client disconnected for user {connection.userId}")
 
-        # Update the user's status
-        user = repository_factory.get_user_repository().get_by_id(db, connection.userId)
+        user = repository_factory.get_user_repository().get_by_id(
+            db, int(connection.userId)
+        )
         if user:
             user.whatsapp_connected = False
-            user.whatsapp_last_seen = datetime.utcnow()
+            user.whatsapp_last_seen = datetime.now(UTC)
             db.commit()
 
-            # Send a Telegram notification if configured
             if user.telegram_channel_id:
-                from app.telegram.service import TelegramService
-
-                telegram_service = TelegramService()
-
+                telegram_service = get_telegram_service()
                 notification = f"❌ WhatsApp отключен для пользователя {user.username}"
                 await telegram_service.send_notification(
                     user.telegram_channel_id, notification
@@ -312,20 +306,16 @@ async def whatsapp_disconnected(
         raise
     except Exception as e:
         logger.error(f"Error updating disconnection status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def analyze_and_save_message(
     message: WhatsAppMessageWebhook, chat_db_id: int, user_id: str
 ):
     """Background task: analyze importance and save the message with safe handling"""
-    # Create a new DB session for the background task
-    from app.database.connection import SessionLocal
-
-    db = SessionLocal()
+    from app.database.connection import get_db_session
 
     try:
-        # Additional validation in the background task
         if not message.content:
             logger.warning(f"Message content is empty for message {message.messageId}")
             return
@@ -339,98 +329,61 @@ async def analyze_and_save_message(
             )
             return
 
-        # Use OpenAI for a more accurate importance analysis
-        openai_service = OpenAIService()
+        openai_service = get_openai_service()
         chat_name = message.chatName or ""
         ai_importance = await openai_service.analyze_message_importance(
             sanitized_content,
             f"Чат: {SecurityValidators.sanitize_input(chat_name, max_length=100)}, Тип: {message.chatType}",
         )
 
-        # Take the maximum between the base score and AI
         final_importance = max(message.importance, ai_importance)
+        timestamp = _parse_timestamp(message.timestamp)
 
-        # Safe parsing of the timestamp
-        try:
-            if message.timestamp.endswith("Z"):
-                timestamp = datetime.fromisoformat(
-                    message.timestamp.replace("Z", "+00:00")
-                )
-            elif "+" in message.timestamp or message.timestamp.endswith("UTC"):
-                timestamp = datetime.fromisoformat(message.timestamp.replace("UTC", ""))
-            else:
-                # If the format is unknown, use the current time
-                timestamp = datetime.utcnow()
-                logger.warning(
-                    f"Unknown timestamp format: {message.timestamp}, using current time"
-                )
-        except (ValueError, AttributeError) as e:
-            logger.warning(
-                f"Failed to parse timestamp {message.timestamp}: {e}, using current time"
+        with get_db_session() as db:
+            whatsapp_message = WhatsAppMessage(
+                chat_id=chat_db_id,
+                message_id=message.messageId,
+                sender=SecurityValidators.sanitize_input(
+                    message.sender or "", max_length=100
+                ),
+                content=sanitized_content,
+                timestamp=timestamp,
+                importance_score=final_importance,
+                has_media=message.hasMedia,
+                is_processed=False,
+                ai_analyzed=True,
             )
-            timestamp = datetime.utcnow()
-
-        # Save the message to the database
-        whatsapp_message = WhatsAppMessage(
-            chat_id=chat_db_id,
-            message_id=message.messageId,
-            sender=SecurityValidators.sanitize_input(
-                message.sender or "", max_length=100
-            ),
-            content=sanitized_content,
-            timestamp=timestamp,
-            importance_score=final_importance,
-            has_media=message.hasMedia,
-            is_processed=False,
-            ai_analyzed=True,  # Mark as analyzed by AI
-        )
-
-        db.add(whatsapp_message)
-        db.commit()
+            db.add(whatsapp_message)
 
         logger.info(
             f"Saved message {message.messageId} with importance {final_importance}"
         )
 
-        # If the message is critically important, we can send an immediate notification
         if final_importance >= 5:
             await send_urgent_notification(message, user_id)
 
     except Exception as e:
         logger.error(f"Error analyzing and saving message: {e}")
-        db.rollback()
-    finally:
-        db.close()
 
 
 async def send_urgent_notification(message: WhatsAppMessageWebhook, user_id: str):
     """Send an urgent notification with safe handling"""
-    # Create a new DB session for the background task
-    from app.database.connection import SessionLocal
-
-    db = SessionLocal()
+    from app.database.connection import get_db_session
 
     try:
-        user = repository_factory.get_user_repository().get_by_id(db, user_id)
-        if user and user.is_active and user.telegram_channel_id:
-            from app.telegram.service import TelegramService
+        if not message.content:
+            logger.warning("Message content is empty for urgent notification")
+            return
 
-            telegram_service = TelegramService()
-
-            # Safe message processing
-            if not message.content:
-                logger.warning("Message content is empty for urgent notification")
+        with get_db_session() as db:
+            user = repository_factory.get_user_repository().get_by_id(db, int(user_id))
+            if not (user and user.is_active and user.telegram_channel_id):
                 return
 
-            sanitized_content = SecurityValidators.sanitize_input(
-                message.content, max_length=2000
-            )
-            # Get the monitored chat to check for custom name
             monitored_chat = repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(
                 db, int(user_id), message.chatId
             )
 
-            # Use custom name if available, otherwise use original chat name
             if monitored_chat and monitored_chat.custom_name:
                 sanitized_chat_name = SecurityValidators.sanitize_input(
                     monitored_chat.custom_name, max_length=100
@@ -439,29 +392,31 @@ async def send_urgent_notification(message: WhatsAppMessageWebhook, user_id: str
                 sanitized_chat_name = SecurityValidators.sanitize_input(
                     message.chatName or "", max_length=100
                 )
-            sanitized_sender = SecurityValidators.sanitize_input(
-                message.sender or "", max_length=100
-            )
 
-            # Translate the message into Russian via OpenAI
-            openai_service = OpenAIService()
-            translated_message = await openai_service.translate_to_russian(
-                sanitized_content
-            )
+            telegram_channel_id = user.telegram_channel_id
 
-            urgent_text = "🚨 *СРОЧНОЕ СООБЩЕНИЕ*\n\n"
-            urgent_text += f"📱 Чат: *{sanitized_chat_name}*\n"
-            urgent_text += f"👤 От: *{sanitized_sender}*\n"
-            urgent_text += f"💬 Сообщение: {translated_message}\n"
-            urgent_text += f"🕐 Время: {datetime.now().strftime('%H:%M %d.%m.%Y')}"
+        sanitized_content = SecurityValidators.sanitize_input(
+            message.content, max_length=2000
+        )
+        sanitized_sender = SecurityValidators.sanitize_input(
+            message.sender or "", max_length=100
+        )
 
-            await telegram_service.send_notification(
-                user.telegram_channel_id, urgent_text
-            )
+        openai_service = get_openai_service()
+        translated_message = await openai_service.translate_to_russian(
+            sanitized_content
+        )
 
-            logger.info(f"Sent urgent notification for message {message.messageId}")
+        urgent_text = "🚨 *СРОЧНОЕ СООБЩЕНИЕ*\n\n"
+        urgent_text += f"📱 Чат: *{sanitized_chat_name}*\n"
+        urgent_text += f"👤 От: *{sanitized_sender}*\n"
+        urgent_text += f"💬 Сообщение: {translated_message}\n"
+        urgent_text += f"🕐 Время: {datetime.now().strftime('%H:%M %d.%m.%Y')}"
+
+        telegram_service = get_telegram_service()
+        await telegram_service.send_notification(telegram_channel_id, urgent_text)
+
+        logger.info(f"Sent urgent notification for message {message.messageId}")
 
     except Exception as e:
         logger.error(f"Error sending urgent notification: {e}")
-    finally:
-        db.close()

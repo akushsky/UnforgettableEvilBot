@@ -89,6 +89,11 @@ class Settings:
             "WHATSAPP_BRIDGE_URL", "http://localhost:3000"
         )
 
+        # WhatsApp Business API settings
+        self.WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+        self.WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        self.WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
+
         # Async processor settings
         self.SKIP_ASYNC_PROCESSOR = (
             os.getenv("SKIP_ASYNC_PROCESSOR", "false").lower() == "true"
@@ -103,7 +108,8 @@ class Settings:
         self.TESTING = os.getenv("TEST_ENV_FILE") is not None
 
         # Admin settings
-        self.ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+        self.ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+        self.ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "1"))
 
         # Server settings
         self.PORT = int(os.getenv("PORT", "9876"))

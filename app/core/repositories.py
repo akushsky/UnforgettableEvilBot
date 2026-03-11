@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import asc, desc
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.base_service import BaseService
 from app.models.database import (
     DigestLog,
+    DigestPreference,
     MonitoredChat,
     OpenAIMetrics,
     ResourceSavings,
@@ -15,6 +16,7 @@ from app.models.database import (
     User,
     UserSettings,
     WhatsAppMessage,
+    WhatsAppPhone,
 )
 from config.logging_config import get_logger
 
@@ -33,7 +35,7 @@ class BaseRepository(BaseService):
         super().__init__()
         self.model = model_class
 
-    def get_by_id(self, db: Session, id: int) -> Optional[Any]:
+    def get_by_id(self, db: Session, id: int) -> Any | None:
         """Get a record by ID"""
         return db.query(self.model).filter(self.model.id == id).first()
 
@@ -46,11 +48,11 @@ class BaseRepository(BaseService):
             )
         return result
 
-    def get_all(self, db: Session, skip: int = 0, limit: int = 100) -> List[Any]:
+    def get_all(self, db: Session, skip: int = 0, limit: int = 100) -> list[Any]:
         """Get all records with pagination"""
         return db.query(self.model).offset(skip).limit(limit).all()
 
-    def create(self, db: Session, obj_in: Dict[str, Any]) -> Any:
+    def create(self, db: Session, obj_in: dict[str, Any]) -> Any:
         """Create a new record"""
         db_obj = self.model(**obj_in)
         db.add(db_obj)
@@ -58,7 +60,7 @@ class BaseRepository(BaseService):
         db.refresh(db_obj)
         return db_obj
 
-    def update(self, db: Session, db_obj: Any, obj_in: Dict[str, Any]) -> Any:
+    def update(self, db: Session, db_obj: Any, obj_in: dict[str, Any]) -> Any:
         """Update a record"""
         for field, value in obj_in.items():
             if hasattr(db_obj, field):
@@ -88,19 +90,19 @@ class UserRepository(BaseRepository):
         """Init  ."""
         super().__init__(User)
 
-    def get_by_username(self, db: Session, username: str) -> Optional[User]:
+    def get_by_username(self, db: Session, username: str) -> User | None:
         """Get a user by username"""
         return db.query(User).filter(User.username == username).first()
 
-    def get_by_email(self, db: Session, email: str) -> Optional[User]:
+    def get_by_email(self, db: Session, email: str) -> User | None:
         """Get a user by email"""
         return db.query(User).filter(User.email == email).first()
 
-    def get_active_users(self, db: Session) -> List[User]:
+    def get_active_users(self, db: Session) -> list[User]:
         """Get all active users"""
         return db.query(User).filter(User.is_active, User.whatsapp_connected).all()
 
-    def get_active_users_with_telegram(self, db: Session) -> List[User]:
+    def get_active_users_with_telegram(self, db: Session) -> list[User]:
         """Get all active users with configured Telegram channels"""
         return (
             db.query(User)
@@ -108,11 +110,20 @@ class UserRepository(BaseRepository):
             .all()
         )
 
-    def get_active_users_with_whatsapp(self, db: Session) -> List[User]:
+    def get_active_users_with_preferences(self, db: Session) -> list[User]:
+        """Get all active users with their digest preferences loaded"""
+        return (
+            db.query(User)
+            .options(joinedload(User.digest_preference))
+            .filter(User.is_active)
+            .all()
+        )
+
+    def get_active_users_with_whatsapp(self, db: Session) -> list[User]:
         """Get all active users with WhatsApp connected"""
         return db.query(User).filter(User.is_active, User.whatsapp_connected).all()
 
-    def get_suspended_users_with_whatsapp(self, db: Session) -> List[User]:
+    def get_suspended_users_with_whatsapp(self, db: Session) -> list[User]:
         """Get suspended users with active WhatsApp connections"""
         return (
             db.query(User)
@@ -120,7 +131,7 @@ class UserRepository(BaseRepository):
             .all()
         )
 
-    def get_users_with_chats(self, db: Session) -> List[User]:
+    def get_users_with_chats(self, db: Session) -> list[User]:
         """Get users with their chats (eager loading)"""
         return (
             db.query(User)
@@ -129,7 +140,7 @@ class UserRepository(BaseRepository):
             .all()
         )
 
-    def get_user_with_full_data(self, db: Session, user_id: int) -> Optional[User]:
+    def get_user_with_full_data(self, db: Session, user_id: int) -> User | None:
         """Get a user with all related data"""
         return (
             db.query(User)
@@ -144,7 +155,7 @@ class UserRepository(BaseRepository):
         """Update WhatsApp connection status"""
         user = self.get_by_id_or_404(db, user_id)
         user.whatsapp_connected = connected
-        user.whatsapp_last_seen = datetime.utcnow()
+        user.whatsapp_last_seen = datetime.now(UTC)
         db.commit()
         db.refresh(user)
         return user
@@ -159,7 +170,7 @@ class MonitoredChatRepository(BaseRepository):
 
     def get_by_user_and_chat_id(
         self, db: Session, user_id: int, chat_id: str
-    ) -> Optional[MonitoredChat]:
+    ) -> MonitoredChat | None:
         """Get a chat by user and chat ID"""
         return (
             db.query(MonitoredChat)
@@ -169,7 +180,7 @@ class MonitoredChatRepository(BaseRepository):
 
     def get_active_chats_for_user(
         self, db: Session, user_id: int
-    ) -> List[MonitoredChat]:
+    ) -> list[MonitoredChat]:
         """Get a user's active chats"""
         return (
             db.query(MonitoredChat)
@@ -177,9 +188,7 @@ class MonitoredChatRepository(BaseRepository):
             .all()
         )
 
-    def get_chat_with_messages(
-        self, db: Session, chat_id: int
-    ) -> Optional[MonitoredChat]:
+    def get_chat_with_messages(self, db: Session, chat_id: int) -> MonitoredChat | None:
         """Get a chat with messages"""
         return (
             db.query(MonitoredChat)
@@ -196,9 +205,7 @@ class WhatsAppMessageRepository(BaseRepository):
         """Init  ."""
         super().__init__(WhatsAppMessage)
 
-    def get_by_message_id(
-        self, db: Session, message_id: str
-    ) -> Optional[WhatsAppMessage]:
+    def get_by_message_id(self, db: Session, message_id: str) -> WhatsAppMessage | None:
         """Get a message by message ID"""
         return (
             db.query(WhatsAppMessage)
@@ -208,7 +215,7 @@ class WhatsAppMessageRepository(BaseRepository):
 
     def get_unprocessed_messages(
         self, db: Session, chat_id: int
-    ) -> List[WhatsAppMessage]:
+    ) -> list[WhatsAppMessage]:
         """Get unprocessed messages"""
         return (
             db.query(WhatsAppMessage)
@@ -222,7 +229,7 @@ class WhatsAppMessageRepository(BaseRepository):
 
     def get_important_messages(
         self, db: Session, chat_id: int, importance_threshold: int = 3
-    ) -> List[WhatsAppMessage]:
+    ) -> list[WhatsAppMessage]:
         """Get important messages"""
         return (
             db.query(WhatsAppMessage)
@@ -236,9 +243,9 @@ class WhatsAppMessageRepository(BaseRepository):
 
     def get_messages_for_digest(
         self, db: Session, chat_id: int, hours_back: int = 24
-    ) -> List[WhatsAppMessage]:
+    ) -> list[WhatsAppMessage]:
         """Get messages for a digest over the last N hours"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours_back)
         return (
             db.query(WhatsAppMessage)
             .filter(
@@ -256,9 +263,9 @@ class WhatsAppMessageRepository(BaseRepository):
         chat_id: int,
         hours_back: int = 24,
         importance_threshold: int = 3,
-    ) -> List[WhatsAppMessage]:
+    ) -> list[WhatsAppMessage]:
         """Get important messages for a digest over the last N hours"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours_back)
         return (
             db.query(WhatsAppMessage)
             .filter(
@@ -271,7 +278,7 @@ class WhatsAppMessageRepository(BaseRepository):
             .all()
         )
 
-    def mark_as_processed(self, db: Session, message_ids: List[int]) -> int:
+    def mark_as_processed(self, db: Session, message_ids: list[int]) -> int:
         """Mark messages as processed"""
         result = (
             db.query(WhatsAppMessage)
@@ -282,7 +289,7 @@ class WhatsAppMessageRepository(BaseRepository):
         return result
 
     def delete_old_messages(
-        self, db: Session, chat_ids: List[int], cutoff_time: datetime
+        self, db: Session, chat_ids: list[int], cutoff_time: datetime
     ) -> int:
         """Delete old messages for specified chats"""
         result = (
@@ -309,8 +316,8 @@ class WhatsAppMessageRepository(BaseRepository):
         )
 
     def get_messages_by_chat_ids(
-        self, db: Session, chat_ids: List[int], limit: int = 1000
-    ) -> List[WhatsAppMessage]:
+        self, db: Session, chat_ids: list[int], limit: int = 1000
+    ) -> list[WhatsAppMessage]:
         """Get messages by chat IDs"""
         return (
             db.query(WhatsAppMessage)
@@ -328,9 +335,7 @@ class DigestLogRepository(BaseRepository):
         """Init  ."""
         super().__init__(DigestLog)
 
-    def get_last_digest_for_user(
-        self, db: Session, user_id: int
-    ) -> Optional[DigestLog]:
+    def get_last_digest_for_user(self, db: Session, user_id: int) -> DigestLog | None:
         """Get the user's most recent digest"""
         return (
             db.query(DigestLog)
@@ -341,9 +346,9 @@ class DigestLogRepository(BaseRepository):
 
     def get_digests_for_period(
         self, db: Session, user_id: int, days_back: int = 7
-    ) -> List[DigestLog]:
+    ) -> list[DigestLog]:
         """Get digests over a period"""
-        cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days_back)
         return (
             db.query(DigestLog)
             .filter(DigestLog.user_id == user_id, DigestLog.created_at >= cutoff_date)
@@ -359,7 +364,7 @@ class DigestLogRepository(BaseRepository):
         if not last_digest:
             return True
 
-        time_since_last = datetime.utcnow() - last_digest.created_at
+        time_since_last = datetime.now(UTC) - last_digest.created_at
         return bool(time_since_last >= timedelta(hours=interval_hours))
 
     def delete_old_digests(self, db: Session, cutoff_time: datetime) -> int:
@@ -414,7 +419,7 @@ class UserSettingsRepository(BaseRepository):
         """Init  ."""
         super().__init__(UserSettings)
 
-    def get_by_user_id(self, db: Session, user_id: int) -> Optional[UserSettings]:
+    def get_by_user_id(self, db: Session, user_id: int) -> UserSettings | None:
         """Get user settings by user ID"""
         return db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
 
@@ -428,7 +433,7 @@ class ResourceSavingsRepository(BaseRepository):
 
     def get_savings_in_period(
         self, db: Session, period_start: datetime, period_end: datetime
-    ) -> List[ResourceSavings]:
+    ) -> list[ResourceSavings]:
         """Get savings records in a period"""
         return (
             db.query(ResourceSavings)
@@ -441,7 +446,7 @@ class ResourceSavingsRepository(BaseRepository):
 
     def get_savings_by_user_in_period(
         self, db: Session, user_id: int, period_start: datetime
-    ) -> List[ResourceSavings]:
+    ) -> list[ResourceSavings]:
         """Get savings history for a specific user in a period"""
         return (
             db.query(ResourceSavings)
@@ -461,9 +466,81 @@ class OpenAIMetricsRepository(BaseRepository):
         """Init  ."""
         super().__init__(OpenAIMetrics)
 
-    def get_all_metrics_ordered(self, db: Session) -> List[OpenAIMetrics]:
+    def get_all_metrics_ordered(self, db: Session) -> list[OpenAIMetrics]:
         """Get all metrics ordered by request time descending"""
         return db.query(OpenAIMetrics).order_by(desc(OpenAIMetrics.request_time)).all()
+
+
+class DigestPreferenceRepository(BaseRepository):
+    """Repository for working with digest preferences"""
+
+    def __init__(self):
+        """Init  ."""
+        super().__init__(DigestPreference)
+
+    def get_active_preferences(self, db: Session) -> list[DigestPreference]:
+        """Get all active digest preferences"""
+        return (
+            db.query(DigestPreference)
+            .filter(DigestPreference.is_active.is_(True))
+            .all()
+        )
+
+    def get_by_name(self, db: Session, name: str) -> DigestPreference | None:
+        """Get digest preference by name"""
+        return db.query(DigestPreference).filter(DigestPreference.name == name).first()
+
+
+class WhatsAppPhoneRepository(BaseRepository):
+    """Repository for working with WhatsApp phone numbers"""
+
+    def __init__(self):
+        """Init  ."""
+        super().__init__(WhatsAppPhone)
+
+    def get_active_phones_for_user(
+        self, db: Session, user_id: int
+    ) -> list[WhatsAppPhone]:
+        """Get all active WhatsApp phones for a user"""
+        return (
+            db.query(WhatsAppPhone)
+            .filter(WhatsAppPhone.user_id == user_id, WhatsAppPhone.is_active.is_(True))
+            .all()
+        )
+
+    def get_phone_numbers_for_user(self, db: Session, user_id: int) -> list[str]:
+        """Get phone numbers for a user"""
+        phones = self.get_active_phones_for_user(db, user_id)
+        return [phone.phone_number for phone in phones]
+
+    def create_phone(
+        self,
+        db: Session,
+        user_id: int,
+        phone_number: str,
+        display_name: str | None = None,
+    ) -> WhatsAppPhone:
+        """Create a new WhatsApp phone entry"""
+        phone = WhatsAppPhone(
+            user_id=user_id,
+            phone_number=phone_number,
+            display_name=display_name,
+            is_active=True,
+        )
+        db.add(phone)
+        db.commit()
+        db.refresh(phone)
+        return phone
+
+    def deactivate_phone(self, db: Session, phone_id: int) -> bool:
+        """Deactivate a WhatsApp phone"""
+        phone = self.get_by_id(db, phone_id)
+        if phone:
+            phone.is_active = False
+            phone.updated_at = datetime.now(UTC)
+            db.commit()
+            return True
+        return False
 
 
 # Global repository instances
@@ -475,3 +552,5 @@ system_log_repository = SystemLogRepository()
 user_settings_repository = UserSettingsRepository()
 resource_savings_repository = ResourceSavingsRepository()
 openai_metrics_repository = OpenAIMetricsRepository()
+digest_preference_repository = DigestPreferenceRepository()
+whatsapp_phone_repository = WhatsAppPhoneRepository()

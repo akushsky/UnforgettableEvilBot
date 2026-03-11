@@ -26,9 +26,7 @@ def create_admin_session(request: Request) -> str:
 def is_admin_authenticated(request: Request) -> bool:
     """Check if admin is authenticated"""
     session_id = request.cookies.get("admin_session")
-    if session_id and session_id in admin_sessions:
-        return True
-    return False
+    return bool(session_id and session_id in admin_sessions)
 
 
 def require_admin_auth(request: Request) -> bool:
@@ -54,13 +52,14 @@ def get_admin_auth_dependency(request: Request) -> bool:
 
 def verify_admin_password(password: str) -> bool:
     """Verify admin password against environment variable"""
-    try:
-        admin_password = getattr(settings, "ADMIN_PASSWORD", "admin123")
-        return password == admin_password
-    except Exception as e:
-        logger.error(f"Error verifying admin password: {e}")
-        # Fallback to default password in case of settings error
-        return password == "admin123"
+    admin_password = settings.ADMIN_PASSWORD
+    if not admin_password or admin_password == "admin123":
+        logger.error(
+            "ADMIN_PASSWORD is not configured or still set to default. "
+            "Set a strong ADMIN_PASSWORD environment variable."
+        )
+        return False
+    return password == admin_password
 
 
 def get_admin_login_page(request: Request) -> HTMLResponse:

@@ -1,10 +1,10 @@
 import time
 from contextlib import contextmanager
-from typing import List, TypedDict
+from typing import TypedDict
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from config.logging_config import get_logger
@@ -31,15 +31,12 @@ engine = create_engine(
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base class for models
-Base = declarative_base()
-
 
 class DatabaseStats(TypedDict):
     total_queries: int
     slow_queries: int
     connection_errors: int
-    query_times: List[float]
+    query_times: list[float]
     avg_query_time: float
     max_query_time: float
     min_query_time: float
