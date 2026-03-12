@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 class OpenAIClient(BaseService):
     """Client for working with OpenAI API - API requests only"""
 
+    REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "gpt-5-mini", "gpt-5"}
+
     def __init__(self):
         """Init  ."""
         super().__init__()
@@ -29,18 +31,22 @@ class OpenAIClient(BaseService):
         temperature: float | None = None,
     ) -> str:
         """Execute request to OpenAI API"""
-        # Use settings defaults if not provided
         model = model or settings.OPENAI_MODEL
         max_tokens = max_tokens or settings.OPENAI_MAX_TOKENS
         temperature = temperature or settings.OPENAI_TEMPERATURE
 
         try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if model in self.REASONING_MODELS:
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+                kwargs["temperature"] = temperature
+
+            response = await self.client.chat.completions.create(**kwargs)
 
             content = response.choices[0].message.content
             if content is None:

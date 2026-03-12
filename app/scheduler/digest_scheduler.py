@@ -44,6 +44,8 @@ class DigestScheduler:
         self.is_running = False
         self.last_digest_run: datetime | None = None
         self.last_cleanup_run: datetime | None = None
+        self.last_error: str | None = None
+        self.last_error_time: datetime | None = None
 
     async def start_scheduler(self):
         """Start task scheduler"""
@@ -208,7 +210,9 @@ class DigestScheduler:
             self.last_digest_run = datetime.now(UTC)
 
         except Exception as e:
-            logger.error(f"Error in process_all_users: {e}")
+            self.last_error = str(e)
+            self.last_error_time = datetime.now(UTC)
+            logger.error(f"Error in process_all_users: {e}", exc_info=True)
 
     async def should_create_digest(self, user: User, db: Session) -> bool:
         """Check whether a digest should be created for the user"""
@@ -388,6 +392,10 @@ class DigestScheduler:
             ),
             "last_cleanup_run": (
                 self.last_cleanup_run.isoformat() if self.last_cleanup_run else None
+            ),
+            "last_error": self.last_error,
+            "last_error_time": (
+                self.last_error_time.isoformat() if self.last_error_time else None
             ),
         }
 
