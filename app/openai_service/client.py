@@ -14,6 +14,7 @@ class OpenAIClient(BaseService):
     """Client for working with OpenAI API - API requests only"""
 
     REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "gpt-5-mini", "gpt-5"}
+    REASONING_TOKEN_MULTIPLIER = 8
 
     def __init__(self):
         """Init  ."""
@@ -41,7 +42,12 @@ class OpenAIClient(BaseService):
                 "messages": [{"role": "user", "content": prompt}],
             }
             if model in self.REASONING_MODELS:
-                kwargs["max_completion_tokens"] = max_tokens
+                # Reasoning models spend most of max_completion_tokens on
+                # internal chain-of-thought, so we need a larger budget
+                # to ensure visible output is produced.
+                kwargs["max_completion_tokens"] = (
+                    max_tokens * self.REASONING_TOKEN_MULTIPLIER
+                )
             else:
                 kwargs["max_tokens"] = max_tokens
                 kwargs["temperature"] = temperature
@@ -49,7 +55,7 @@ class OpenAIClient(BaseService):
             response = await self.client.chat.completions.create(**kwargs)
 
             content = response.choices[0].message.content
-            if content is None:
+            if not content or not content.strip():
                 raise ValueError("OpenAI returned empty content")
             content = content.strip()
 
