@@ -199,13 +199,12 @@ class DigestScheduler:
                     db
                 )
 
-            for user in users:
-                try:
-                    with get_db_session() as user_db:
-                        if await self.should_create_digest(user, user_db):
-                            await self.create_and_send_digest(user, user_db)
-                except Exception as e:
-                    logger.error(f"Error processing user {user.username}: {e}")
+                for user in users:
+                    try:
+                        if await self.should_create_digest(user, db):
+                            await self.create_and_send_digest(user, db)
+                    except Exception as e:
+                        logger.error(f"Error processing user {user.username}: {e}")
 
             self.last_digest_run = datetime.now(UTC)
 
