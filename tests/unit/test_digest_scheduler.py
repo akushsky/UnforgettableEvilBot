@@ -189,11 +189,7 @@ class TestDigestScheduler:
     ):
         """Test processing all users successfully"""
         mock_db = Mock()
-        mock_user_db = Mock()
-        mock_get_db_session.side_effect = [
-            _mock_db_cm(mock_db)(),
-            _mock_db_cm(mock_user_db)(),
-        ]
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
@@ -210,11 +206,7 @@ class TestDigestScheduler:
     ):
         """Test processing users with digest creation"""
         mock_db = Mock()
-        mock_user_db = Mock()
-        mock_get_db_session.side_effect = [
-            _mock_db_cm(mock_db)(),
-            _mock_db_cm(mock_user_db)(),
-        ]
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
@@ -236,13 +228,9 @@ class TestDigestScheduler:
     async def test_process_all_users_with_error(
         self, mock_get_db_session, mock_repo_factory
     ):
-        """Test processing users with error handling"""
+        """Test processing users with error handling -- session is rolled back"""
         mock_db = Mock()
-        mock_user_db = Mock()
-        mock_get_db_session.side_effect = [
-            _mock_db_cm(mock_db)(),
-            _mock_db_cm(mock_user_db)(),
-        ]
+        mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
         mock_user_repo = Mock()
         mock_users = [Mock(username="test_user")]
@@ -258,15 +246,14 @@ class TestDigestScheduler:
             ),
         ):
             await self.scheduler.process_all_users()
+            mock_db.rollback.assert_called_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_should_create_digest(self, mock_repo_factory):
         """Test should_create_digest method"""
-        # Mock user and database session
-        mock_user = Mock(id=1)
+        mock_user = Mock(id=1, digest_interval_hours=6)
         mock_db = Mock()
 
-        # Mock digest repository
         mock_digest_repo = Mock()
         mock_digest_repo.should_create_digest.return_value = True
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
@@ -275,7 +262,26 @@ class TestDigestScheduler:
 
         assert result is True
         mock_digest_repo.should_create_digest.assert_called_once_with(
-            mock_db, mock_user.id, mock_user.digest_interval_hours
+            mock_db, mock_user.id, 6
+        )
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_should_create_digest_defaults_interval_when_none(
+        self, mock_repo_factory
+    ):
+        """Test should_create_digest defaults to 4 hours when interval is None"""
+        mock_user = Mock(id=1, digest_interval_hours=None)
+        mock_db = Mock()
+
+        mock_digest_repo = Mock()
+        mock_digest_repo.should_create_digest.return_value = True
+        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
+
+        result = await self.scheduler.should_create_digest(mock_user, mock_db)
+
+        assert result is True
+        mock_digest_repo.should_create_digest.assert_called_once_with(
+            mock_db, mock_user.id, 4
         )
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
@@ -309,24 +315,23 @@ class TestDigestScheduler:
         self, mock_datetime, mock_repo_factory
     ):
         """Test successful digest creation and sending"""
-        # Mock user and database session
         mock_user = Mock(
-            username="test_user", id=1, digest_interval_hours=24, digest_preference=None
+            username="test_user",
+            id=1,
+            digest_interval_hours=24,
+            digest_preference=None,
+            telegram_channel_id="123456",
         )
         mock_db = Mock()
 
-        # Mock datetime
         mock_datetime.utcnow.return_value = datetime(2024, 1, 1, 12, 0, 0)
 
-        # Mock monitored chat
-        mock_chat = Mock(id=1, chat_name="Test Chat")
+        mock_chat = Mock(id=1, chat_name="Test Chat", custom_name=None)
 
-        # Mock monitored chat repository
         mock_chat_repo = Mock()
         mock_chat_repo.get_active_chats_for_user.return_value = [mock_chat]
         mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
 
-        # Mock WhatsApp message repository
         mock_message_repo = Mock()
         mock_message = Mock(
             sender="Test Sender",
@@ -342,21 +347,17 @@ class TestDigestScheduler:
             mock_message_repo
         )
 
-        # Mock OpenAI service
         self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
             return_value="Test digest content"
         )
 
-        # Mock Telegram service
         self.scheduler.telegram_service.send_digest = AsyncMock(return_value=True)
 
-        # Mock digest log repository
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
         await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
-        # Verify all services were called
         mock_chat_repo.get_active_chats_for_user.assert_called_once_with(
             mock_db, mock_user.id
         )
@@ -365,8 +366,8 @@ class TestDigestScheduler:
         )
         self.scheduler.openai_service.create_digest_by_chats.assert_called_once()
         self.scheduler.telegram_service.send_digest.assert_called_once()
+        mock_message_repo.mark_as_processed.assert_called_once()
         mock_digest_repo.create.assert_called_once()
-        # Note: commit is not called in this method, it's handled by the caller
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.datetime")
@@ -411,25 +412,122 @@ class TestDigestScheduler:
     async def test_create_and_send_digest_with_error(
         self, mock_datetime, mock_repo_factory
     ):
-        """Test digest creation with error handling"""
-        # Mock user and database session
+        """Test digest creation re-raises exceptions for caller to handle"""
         mock_user = Mock(username="test_user", id=1, digest_interval_hours=24)
         mock_db = Mock()
 
-        # Mock datetime
         mock_datetime.utcnow.return_value = datetime(2024, 1, 1, 12, 0, 0)
 
-        # Mock monitored chat repository
         mock_chat_repo = Mock()
         mock_chat_repo.get_active_chats_for_user.side_effect = Exception(
             "Database error"
         )
         mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
 
+        import pytest
+
+        with pytest.raises(Exception, match="Database error"):
+            await self.scheduler.create_and_send_digest(mock_user, mock_db)
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    @patch("app.scheduler.digest_scheduler.datetime")
+    async def test_create_and_send_digest_failed_delivery_no_side_effects(
+        self, mock_datetime, mock_repo_factory
+    ):
+        """When delivery fails, messages must NOT be marked processed and no digest log created"""
+        mock_user = Mock(
+            username="test_user",
+            id=1,
+            digest_interval_hours=24,
+            digest_preference=None,
+            telegram_channel_id="123456",
+        )
+        mock_db = Mock()
+
+        mock_datetime.utcnow.return_value = datetime(2024, 1, 1, 12, 0, 0)
+
+        mock_chat = Mock(id=1, chat_name="Test Chat", custom_name=None)
+        mock_chat_repo = Mock()
+        mock_chat_repo.get_active_chats_for_user.return_value = [mock_chat]
+        mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
+
+        mock_message_repo = Mock()
+        mock_message = Mock(
+            sender="Test Sender",
+            content="Test message",
+            importance_score=5,
+            timestamp=datetime(2024, 1, 1, 11, 0, 0),
+            is_processed=False,
+        )
+        mock_message_repo.get_important_messages_for_digest.return_value = [
+            mock_message
+        ]
+        mock_repo_factory.get_whatsapp_message_repository.return_value = (
+            mock_message_repo
+        )
+
+        self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
+            return_value="Test digest content"
+        )
+
+        self.scheduler.telegram_service.send_digest = AsyncMock(
+            side_effect=Exception("Telegram API error")
+        )
+
+        mock_digest_repo = Mock()
+        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
+
         await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
-        # Should handle error gracefully
-        mock_db.rollback.assert_called_once()
+        mock_message_repo.mark_as_processed.assert_not_called()
+        mock_digest_repo.create.assert_not_called()
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_create_and_send_digest_no_telegram_channel_id(
+        self, mock_repo_factory
+    ):
+        """When telegram_channel_id is None, delivery is skipped gracefully"""
+        mock_user = Mock(
+            username="test_user",
+            id=1,
+            digest_interval_hours=4,
+            digest_preference=None,
+            telegram_channel_id=None,
+        )
+        mock_db = Mock()
+
+        mock_chat = Mock(id=1, chat_name="Test Chat", custom_name=None)
+        mock_chat_repo = Mock()
+        mock_chat_repo.get_active_chats_for_user.return_value = [mock_chat]
+        mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
+
+        mock_message_repo = Mock()
+        mock_message = Mock(
+            sender="Sender",
+            content="msg",
+            importance_score=5,
+            timestamp=datetime(2024, 1, 1, 11, 0, 0),
+            is_processed=False,
+        )
+        mock_message_repo.get_important_messages_for_digest.return_value = [
+            mock_message
+        ]
+        mock_repo_factory.get_whatsapp_message_repository.return_value = (
+            mock_message_repo
+        )
+
+        self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
+            return_value="digest"
+        )
+
+        mock_digest_repo = Mock()
+        mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
+
+        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+
+        self.scheduler.telegram_service.send_digest.assert_not_called()
+        mock_message_repo.mark_as_processed.assert_not_called()
+        mock_digest_repo.create.assert_not_called()
 
     def test_stop_scheduler(self):
         """Test stopping the scheduler"""

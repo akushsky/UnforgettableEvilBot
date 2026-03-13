@@ -204,6 +204,7 @@ class DigestScheduler:
                         if await self.should_create_digest(user, db):
                             await self.create_and_send_digest(user, db)
                     except Exception as e:
+                        db.rollback()
                         logger.error(f"Error processing user {user.username}: {e}")
 
             self.last_digest_run = datetime.now(UTC)
@@ -215,8 +216,9 @@ class DigestScheduler:
 
     async def should_create_digest(self, user: User, db: Session) -> bool:
         """Check whether a digest should be created for the user"""
+        interval = user.digest_interval_hours or 4
         return repository_factory.get_digest_log_repository().should_create_digest(
-            db, user.id, user.digest_interval_hours
+            db, user.id, interval
         )
 
     async def create_and_send_digest(self, user: User, db: Session):
@@ -224,7 +226,6 @@ class DigestScheduler:
         try:
             logger.info(f"Creating digest for user {user.username}")
 
-            # Get the user's monitored chats
             monitored_chats = repository_factory.get_monitored_chat_repository().get_active_chats_for_user(
                 db, user.id
             )
@@ -233,19 +234,17 @@ class DigestScheduler:
                 logger.info(f"No monitored chats for user {user.username}")
                 return
 
-            # Get unprocessed messages from the database (arrived via webhook)
-            # Group messages by chat
             chat_messages: dict[str, list[dict[str, Any]]] = {}
             total_important_messages = 0
             processed_message_ids = []
+            interval = user.digest_interval_hours or 4
 
             for chat in monitored_chats:
                 messages = repository_factory.get_whatsapp_message_repository().get_important_messages_for_digest(
-                    db, chat.id, user.digest_interval_hours, 3
+                    db, chat.id, interval, 3
                 )
 
                 if messages:
-                    # Use custom name if available, otherwise use original chat name
                     display_name = (
                         chat.custom_name if chat.custom_name else chat.chat_name
                     )
@@ -262,22 +261,14 @@ class DigestScheduler:
                         total_important_messages += 1
                         processed_message_ids.append(msg.id)
 
-            # Mark all processed messages in batch
-            if processed_message_ids:
-                repository_factory.get_whatsapp_message_repository().mark_as_processed(
-                    db, processed_message_ids
-                )
-
             if not chat_messages:
                 logger.info(f"No important messages for user {user.username}")
                 return
 
-            # Create the digest grouped by chats
             digest_content = await self.openai_service.create_digest_by_chats(
                 chat_messages
             )
 
-            # Determine delivery method based on user's preference
             telegram_sent = False
             whatsapp_sent = False
             telegram_error = None
@@ -287,19 +278,23 @@ class DigestScheduler:
                 preference_name = user.digest_preference.name
 
                 if preference_name == "telegram":
-                    # Send to Telegram
-                    try:
-                        telegram_sent = await self.telegram_service.send_digest(
-                            str(user.telegram_channel_id), digest_content
+                    if not user.telegram_channel_id:
+                        telegram_error = "No Telegram channel ID configured"
+                        logger.warning(
+                            f"No telegram_channel_id for user {user.username}"
                         )
-                    except Exception as e:
-                        telegram_error = str(e)
-                        logger.error(
-                            f"Failed to send Telegram digest to user {user.username}: {e}"
-                        )
+                    else:
+                        try:
+                            telegram_sent = await self.telegram_service.send_digest(
+                                str(user.telegram_channel_id), digest_content
+                            )
+                        except Exception as e:
+                            telegram_error = str(e)
+                            logger.error(
+                                f"Failed to send Telegram digest to user {user.username}: {e}"
+                            )
 
                 elif preference_name == "whatsapp":
-                    # Send to WhatsApp
                     try:
                         phone_numbers = repository_factory.get_whatsapp_phone_repository().get_phone_numbers_for_user(
                             db, user.id
@@ -322,36 +317,53 @@ class DigestScheduler:
                             f"Failed to send WhatsApp digest to user {user.username}: {e}"
                         )
             else:
-                # Fallback to Telegram if no preference is set
-                try:
-                    telegram_sent = await self.telegram_service.send_digest(
-                        str(user.telegram_channel_id), digest_content
+                if not user.telegram_channel_id:
+                    telegram_error = "No Telegram channel ID configured"
+                    logger.warning(
+                        f"No telegram_channel_id for user {user.username}, "
+                        f"cannot send fallback Telegram digest"
                     )
-                except Exception as e:
-                    telegram_error = str(e)
-                    logger.error(
-                        f"Failed to send fallback Telegram digest to user {user.username}: {e}"
-                    )
+                else:
+                    try:
+                        telegram_sent = await self.telegram_service.send_digest(
+                            str(user.telegram_channel_id), digest_content
+                        )
+                    except Exception as e:
+                        telegram_error = str(e)
+                        logger.error(
+                            f"Failed to send fallback Telegram digest to user {user.username}: {e}"
+                        )
 
-            # Save the digest log
-            digest_log_data = {
-                "user_id": user.id,
-                "digest_content": digest_content,
-                "message_count": total_important_messages,
-                "telegram_sent": telegram_sent,
-                "telegram_error": telegram_error,
-                "whatsapp_sent": whatsapp_sent,
-                "whatsapp_error": whatsapp_error,
-            }
-            repository_factory.get_digest_log_repository().create(db, digest_log_data)
-
-            logger.info(
-                f"Digest created and sent for user {user.username}. Messages: {total_important_messages}, Chats: {len(chat_messages)}"
-            )
+            if telegram_sent or whatsapp_sent:
+                repository_factory.get_whatsapp_message_repository().mark_as_processed(
+                    db, processed_message_ids
+                )
+                digest_log_data = {
+                    "user_id": user.id,
+                    "digest_content": digest_content,
+                    "message_count": total_important_messages,
+                    "telegram_sent": telegram_sent,
+                    "telegram_error": telegram_error,
+                    "whatsapp_sent": whatsapp_sent,
+                    "whatsapp_error": whatsapp_error,
+                }
+                repository_factory.get_digest_log_repository().create(
+                    db, digest_log_data
+                )
+                logger.info(
+                    f"Digest created and sent for user {user.username}. "
+                    f"Messages: {total_important_messages}, Chats: {len(chat_messages)}"
+                )
+            else:
+                logger.error(
+                    f"Digest delivery failed for user {user.username}. "
+                    f"Telegram error: {telegram_error}, WhatsApp error: {whatsapp_error}. "
+                    f"Will retry next cycle."
+                )
 
         except Exception as e:
             logger.error(f"Error creating digest for user {user.username}: {e}")
-            db.rollback()
+            raise
 
     def stop_scheduler(self):
         """Stop the scheduler"""

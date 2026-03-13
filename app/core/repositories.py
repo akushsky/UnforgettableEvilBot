@@ -279,13 +279,16 @@ class WhatsAppMessageRepository(BaseRepository):
         )
 
     def mark_as_processed(self, db: Session, message_ids: list[int]) -> int:
-        """Mark messages as processed"""
+        """Mark messages as processed.
+
+        Does NOT commit -- the caller is responsible for committing
+        so that marking and digest log creation are atomic.
+        """
         result = (
             db.query(WhatsAppMessage)
             .filter(WhatsAppMessage.id.in_(message_ids))
             .update({"is_processed": True}, synchronize_session=False)
         )
-        db.commit()
         return result
 
     def delete_old_messages(
