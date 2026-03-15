@@ -112,8 +112,7 @@ def connect_db():
 def main():
     """Main CLI function"""
     if len(sys.argv) < 2:
-        print(
-            """
+        print("""
 📚 Database Utilities
 
 Usage: python db_utils.py <command>
@@ -126,8 +125,7 @@ Commands:
   create <msg> - Create new migration with message
   status       - Show database and container status
   connect      - Connect to database with psql
-        """
-        )
+        """)
         sys.exit(1)
 
     command = sys.argv[1].lower()

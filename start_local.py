@@ -549,8 +549,7 @@ def main():
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
-        print(
-            """
+        print("""
 🚀 Local Development Server for WhatsApp Digest System
 
 Usage: python start_local.py
@@ -567,8 +566,7 @@ This script will:
 - Start WhatsApp Bridge (Baileys) on port 3000
 - Start FastAPI on port {settings.PORT}
 - Monitor and restart failed services
-        """
-        )
+        """)
         sys.exit(0)
 
     server = LocalDevelopmentServer()

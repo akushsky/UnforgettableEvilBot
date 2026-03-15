@@ -48,16 +48,12 @@ async def main_dashboard(request: Request):
                     "SELECT id, username, email, whatsapp_connected, created_at FROM users ORDER BY created_at DESC LIMIT 5"
                 )
             ).fetchall()
-            recent_digests = db.execute(
-                text(
-                    """
+            recent_digests = db.execute(text("""
                     SELECT dl.id, dl.user_id, dl.message_count, dl.telegram_sent, dl.created_at, u.username
                     FROM digest_logs dl
                     JOIN users u ON dl.user_id = u.id
                     ORDER BY dl.created_at DESC LIMIT 5
-                """
-                )
-            ).fetchall()
+                """)).fetchall()
 
         trace_manager.complete_span(span.span_id)
         trace_manager.complete_trace(trace_context.trace_id)

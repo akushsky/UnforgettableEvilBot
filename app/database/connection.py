@@ -178,16 +178,12 @@ def optimize_database():
             db.execute(text("ANALYZE"))
             logger.info("Database analysis completed")
 
-            result = db.execute(
-                text(
-                    """
+            result = db.execute(text("""
                 SELECT
                     pg_size_pretty(pg_database_size(current_database())) as db_size,
                     pg_size_pretty(pg_total_relation_size('users')) as users_size,
                     pg_size_pretty(pg_total_relation_size('whatsapp_messages')) as messages_size
-            """
-                )
-            ).fetchone()
+            """)).fetchone()
 
             logger.info(f"Database size: {result[0]}")
             logger.info(f"Users table size: {result[1]}")
