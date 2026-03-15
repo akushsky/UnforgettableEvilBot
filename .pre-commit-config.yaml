@@ -1,7 +1,7 @@
 repos:
   # Black - Python code formatter
   - repo: https://github.com/psf/black
-    rev: 25.1.0
+    rev: 26.3.1
     hooks:
       - id: black
         args: [--line-length=88]
@@ -57,6 +57,17 @@ repos:
       - id: bandit
         args: [-r, -x, tests/, -c, pyproject.toml]
         exclude: tests/
+
+  # Security audit - pip-audit (vulnerability scanner)
+  - repo: local
+    hooks:
+      - id: pip-audit
+        name: pip-audit
+        entry: pip-audit --strict --desc -r requirements.txt -r requirements-dev.txt --ignore-vuln CVE-2024-23342
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
 ci:
   autofix_commit_msg: |
