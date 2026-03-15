@@ -48,6 +48,20 @@ class MessageAnalyzer(BaseService):
         Answer only with a number from 1 to 5.
         """
 
+    _MARKDOWNV2_FORMATTING_INSTRUCTIONS = """
+OUTPUT FORMAT: valid Telegram MarkdownV2.
+Use these formatting options to improve readability:
+- *bold* for section headers and key facts
+- _italic_ for timestamps, context, and secondary details
+- __underline__ for critical or urgent items
+- ~strikethrough~ for resolved or cancelled items
+Any special character that is NOT part of formatting markup must be escaped
+with a preceding backslash. Characters requiring escaping:
+\\. \\- \\( \\) \\! \\> \\# \\+ \\= \\| \\{ \\} \\[ \\] \\~
+Example: "встреча в 12:00 — с Хадас \\(הדס\\)" is correct because the
+parentheses are escaped.
+"""
+
     def _build_digest_prompt(self, messages: list[dict]) -> str:
         """Build prompt for digest creation"""
         messages_text = ""
@@ -59,6 +73,8 @@ class MessageAnalyzer(BaseService):
         Group by topics, highlight key points.
         Use emojis for better perception.
         Format: topic header, brief description.
+
+        {self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
 
         Messages:{messages_text}
 
@@ -92,10 +108,14 @@ class MessageAnalyzer(BaseService):
         For each chat, create a separate section with a header and brief summary of important events.
         Use emojis for better perception and highlighting importance.
 
-        Format:
-        📱 CHAT NAME
+        {self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
+
+        Format example:
+        📱 *CHAT NAME*
         ─────────────────
-        🔴/🟡/🟢 Message
+        🔴 *Key event* — _brief description_
+        🟡 Some update about topic
+        🟢 Minor note
 
         Messages by chats:{chat_sections}
 

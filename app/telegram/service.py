@@ -1,3 +1,4 @@
+import re
 import ssl
 
 from telegram import Bot
@@ -30,22 +31,22 @@ class TelegramService:
             disable_ssl_verify = not settings.TELEGRAM_SSL_VERIFY
         self.disable_ssl_verify = disable_ssl_verify
 
-    def _escape_markdown(self, text: str) -> str:
-        """
-        Escape Markdown special characters to prevent them from being interpreted as formatting.
-        This is especially important for custom chat names that might contain brackets.
-        """
+    _MARKDOWN_V2_SPECIAL = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
+
+    def _escape_markdown_v2(self, text: str) -> str:
+        """Escape all MarkdownV2 special characters so text is rendered literally."""
         if not text:
             return text
+        return self._MARKDOWN_V2_SPECIAL.sub(r"\\\1", text)
 
-        # Escape Markdown special characters
-        # Square brackets are used for links, so they need to be escaped
-        escaped = text.replace("[", "\\[")
-        # Also escape other Markdown special characters that might cause issues
-        escaped = escaped.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-        escaped = escaped.replace("(", "\\(").replace(")", "\\)")
-
-        return escaped
+    def _strip_markdown(self, text: str) -> str:
+        """Remove MarkdownV2 formatting to produce plain text for fallback delivery."""
+        if not text:
+            return text
+        text = re.sub(r"\\([_*\[\]()~`>#+\-=|{}.!])", r"\1", text)
+        for ch in ("*", "_", "~", "`", "||", "__"):
+            text = text.replace(ch, "")
+        return text
 
     def _make_request(self) -> HTTPXRequest:
         """
@@ -92,30 +93,46 @@ class TelegramService:
         return self._bot
 
     async def send_digest(self, channel_id: str, digest_text: str) -> bool:
-        """Send a digest to a Telegram channel"""
+        """Send a digest to a Telegram channel.
+
+        digest_text is expected to be pre-formatted MarkdownV2 (produced by the
+        OpenAI prompt).  If Telegram rejects the markup, we fall back to plain text.
+        """
+        header = "📋 *Дайджест WhatsApp сообщений*\n\n"
         try:
-            # Escape any Markdown characters in the digest text to prevent formatting issues
-            escaped_digest = self._escape_markdown(digest_text)
-            formatted_message = f"📋 *Дайджест WhatsApp сообщений*\n\n{escaped_digest}"
             await self.bot.send_message(
                 chat_id=channel_id,
-                text=formatted_message,
-                parse_mode="Markdown",
+                text=header + digest_text,
+                parse_mode="MarkdownV2",
                 disable_web_page_preview=True,
             )
             logger.info(f"Digest sent successfully to channel {channel_id}")
             return True
-        except TelegramError as e:
-            logger.error(f"Error sending digest to Telegram: {e}")
-            return False
+        except TelegramError:
+            logger.warning(
+                f"MarkdownV2 digest failed for {channel_id}, retrying as plain text"
+            )
+            try:
+                plain = self._strip_markdown(digest_text)
+                await self.bot.send_message(
+                    chat_id=channel_id,
+                    text=f"📋 Дайджест WhatsApp сообщений\n\n{plain}",
+                    disable_web_page_preview=True,
+                )
+                logger.info(f"Digest sent as plain text to channel {channel_id}")
+                return True
+            except TelegramError as e:
+                logger.error(f"Error sending digest to Telegram: {e}")
+                return False
 
     async def send_notification(self, channel_id: str, message: str) -> bool:
         """Send a notification to a Telegram channel"""
         try:
-            # Escape any Markdown characters in the message to prevent formatting issues
-            escaped_message = self._escape_markdown(message)
+            escaped_message = self._escape_markdown_v2(message)
             await self.bot.send_message(
-                chat_id=channel_id, text=f"🔔 {escaped_message}", parse_mode="Markdown"
+                chat_id=channel_id,
+                text=f"🔔 {escaped_message}",
+                parse_mode="MarkdownV2",
             )
             return True
         except TelegramError as e:
@@ -223,33 +240,67 @@ class TelegramService:
             return {"success": False, "error": str(e)}
 
     async def send_formatted_digest(self, channel_id: str, digest_data: dict) -> bool:
-        """Send a formatted digest with additional information"""
+        """Send a formatted digest with additional information.
+
+        The content field is expected to be pre-formatted MarkdownV2 from OpenAI.
+        Dynamic values in the header/footer are escaped for MarkdownV2.
+        Falls back to plain text on formatting errors.
+        """
+        esc = self._escape_markdown_v2
+        separator = esc("─" * 30)
+
+        timestamp = esc(str(digest_data.get("timestamp", "Не указано")))
+        msg_count = esc(str(digest_data.get("message_count", 0)))
+        interval = esc(str(digest_data.get("interval_hours", "?")))
+
+        header = "📱 *WhatsApp Дайджест*\n"
+        header += f"🕐 {timestamp}\n"
+        header += f"📊 Сообщений: {msg_count}\n"
+        header += separator + "\n\n"
+
+        footer = "\n\n" + separator
+        footer += "\n🤖 Автоматический дайджест системы WhatsApp Monitor"
+        footer += f"\n⚙️ Интервал: каждые {interval} часов"
+
+        content = digest_data.get("content", "")
+        full_message = header + content + footer
+
         try:
-            header = "📱 *WhatsApp Дайджест*\n"
-            header += f"🕐 {digest_data.get('timestamp', 'Не указано')}\n"
-            header += f"📊 Сообщений: {digest_data.get('message_count', 0)}\n"
-            header += "─" * 30 + "\n\n"
-
-            footer = "\n\n" + "─" * 30
-            footer += "\n🤖 Автоматический дайджест системы WhatsApp Monitor"
-            footer += (
-                f"\n⚙️ Интервал: каждые {digest_data.get('interval_hours', '?')} часов"
-            )
-
-            # Escape any Markdown characters in the content to prevent formatting issues
-            content = digest_data.get("content", "")
-            escaped_content = self._escape_markdown(content)
-
-            full_message = header + escaped_content + footer
-
             await self.bot.send_message(
                 chat_id=channel_id,
                 text=full_message,
-                parse_mode="Markdown",
+                parse_mode="MarkdownV2",
                 disable_web_page_preview=True,
             )
             logger.info(f"Formatted digest sent to {channel_id}")
             return True
-        except TelegramError as e:
-            logger.error(f"Error sending formatted digest: {e}")
-            return False
+        except TelegramError:
+            logger.warning(
+                f"MarkdownV2 formatted digest failed for {channel_id}, "
+                "retrying as plain text"
+            )
+            try:
+                plain_content = self._strip_markdown(content)
+                raw_ts = str(digest_data.get("timestamp", "Не указано"))
+                raw_count = str(digest_data.get("message_count", 0))
+                raw_interval = str(digest_data.get("interval_hours", "?"))
+
+                plain_header = "📱 WhatsApp Дайджест\n"
+                plain_header += f"🕐 {raw_ts}\n"
+                plain_header += f"📊 Сообщений: {raw_count}\n"
+                plain_header += "─" * 30 + "\n\n"
+
+                plain_footer = "\n\n" + "─" * 30
+                plain_footer += "\n🤖 Автоматический дайджест системы WhatsApp Monitor"
+                plain_footer += f"\n⚙️ Интервал: каждые {raw_interval} часов"
+
+                await self.bot.send_message(
+                    chat_id=channel_id,
+                    text=plain_header + plain_content + plain_footer,
+                    disable_web_page_preview=True,
+                )
+                logger.info(f"Formatted digest sent as plain text to {channel_id}")
+                return True
+            except TelegramError as e:
+                logger.error(f"Error sending formatted digest: {e}")
+                return False
