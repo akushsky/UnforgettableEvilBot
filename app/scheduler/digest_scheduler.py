@@ -205,6 +205,8 @@ class DigestScheduler:
                             await self.create_and_send_digest(user, db)
                     except Exception as e:
                         db.rollback()
+                        self.last_error = str(e)
+                        self.last_error_time = datetime.now(UTC)
                         logger.error(f"Error processing user {user.username}: {e}")
 
             self.last_digest_run = datetime.now(UTC)

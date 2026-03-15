@@ -365,6 +365,30 @@ class TestDigestLogRepository:
         # Assert
         assert result is True  # Should return True if no digest exists
 
+    def test_should_create_digest_with_naive_datetime(self):
+        """DB returns naive datetimes (no tzinfo) -- must not raise TypeError"""
+        user_id = 1
+        mock_digest = Mock(spec=DigestLog)
+        mock_digest.created_at = datetime.utcnow() - timedelta(hours=5)
+
+        with patch.object(self.repository, "get_last_digest_for_user") as mock_get_last:
+            mock_get_last.return_value = mock_digest
+            result = self.repository.should_create_digest(self.mock_db, user_id, 4)
+
+        assert result is True
+
+    def test_should_create_digest_naive_datetime_within_interval(self):
+        """Naive datetime within interval should return False"""
+        user_id = 1
+        mock_digest = Mock(spec=DigestLog)
+        mock_digest.created_at = datetime.utcnow() - timedelta(hours=1)
+
+        with patch.object(self.repository, "get_last_digest_for_user") as mock_get_last:
+            mock_get_last.return_value = mock_digest
+            result = self.repository.should_create_digest(self.mock_db, user_id, 4)
+
+        assert result is False
+
     def test_get_digests_count(self):
         """Test get_digests_count method"""
         # Arrange

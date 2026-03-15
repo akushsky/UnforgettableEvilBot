@@ -247,6 +247,8 @@ class TestDigestScheduler:
         ):
             await self.scheduler.process_all_users()
             mock_db.rollback.assert_called_once()
+            assert self.scheduler.last_error == "Digest error"
+            assert self.scheduler.last_error_time is not None
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_should_create_digest(self, mock_repo_factory):

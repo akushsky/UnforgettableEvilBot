@@ -367,7 +367,10 @@ class DigestLogRepository(BaseRepository):
         if not last_digest:
             return True
 
-        time_since_last = datetime.now(UTC) - last_digest.created_at
+        created_at = last_digest.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        time_since_last = datetime.now(UTC) - created_at
         return bool(time_since_last >= timedelta(hours=interval_hours))
 
     def delete_old_digests(self, db: Session, cutoff_time: datetime) -> int:
