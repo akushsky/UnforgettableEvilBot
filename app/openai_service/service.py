@@ -11,6 +11,14 @@ from config.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+class DigestCreationError(Exception):
+    """Raised when digest creation fails due to AI service issues."""
+
+    def __init__(self, message: str, cause: Exception | None = None):
+        super().__init__(message)
+        self.cause = cause
+
+
 class OpenAIService(BaseService):
     """Main OpenAI service - component coordination"""
 
@@ -79,42 +87,58 @@ class OpenAIService(BaseService):
             return 3  # Return average value on error
 
     async def create_digest(self, messages: list[dict]) -> str:
-        """Create digest using Circuit Breaker and Rate Limiting"""
+        """Create digest using Circuit Breaker and Rate Limiting.
+
+        Raises:
+            DigestCreationError: If the digest cannot be created due to
+                rate limits, circuit breaker, or other AI service failures.
+        """
 
         async def _create():
             """Create."""
             return await self.analyzer.create_digest(messages)
 
         try:
-            # Use Circuit Breaker + Retry mechanism
             return await self.circuit_breaker.call(
                 lambda: self._retry_with_backoff(self._with_rate_limiting, _create)
             )
         except RateLimitExceeded as e:
             self.logger.warning(f"Rate limit exceeded for digest creation: {e}")
-            return "❌ Digest temporarily unavailable due to API rate limits. Please try later."
+            raise DigestCreationError(
+                "Digest creation failed due to API rate limits", cause=e
+            ) from e
         except (CircuitBreakerOpenError, Exception) as e:
             self.logger.error(f"Error creating digest (with circuit breaker): {e}")
-            return "❌ Digest temporarily unavailable due to AI service issues. Please try later."
+            raise DigestCreationError(
+                "Digest creation failed due to AI service issues", cause=e
+            ) from e
 
     async def create_digest_by_chats(self, chat_messages: dict[str, list[dict]]) -> str:
-        """Create digest grouped by chats using Circuit Breaker and Rate Limiting"""
+        """Create digest grouped by chats using Circuit Breaker and Rate Limiting.
+
+        Raises:
+            DigestCreationError: If the digest cannot be created due to
+                rate limits, circuit breaker, or other AI service failures.
+        """
 
         async def _create():
             """Create."""
             return await self.analyzer.create_digest_by_chats(chat_messages)
 
         try:
-            # Use Circuit Breaker + Retry mechanism
             return await self.circuit_breaker.call(
                 lambda: self._retry_with_backoff(self._with_rate_limiting, _create)
             )
         except RateLimitExceeded as e:
             self.logger.warning(f"Rate limit exceeded for digest creation: {e}")
-            return "❌ Digest temporarily unavailable due to API rate limits. Please try later."
+            raise DigestCreationError(
+                "Digest creation failed due to API rate limits", cause=e
+            ) from e
         except (CircuitBreakerOpenError, Exception) as e:
             self.logger.error(f"Error creating digest (with circuit breaker): {e}")
-            return "❌ Digest temporarily unavailable due to AI service issues. Please try later."
+            raise DigestCreationError(
+                "Digest creation failed due to AI service issues", cause=e
+            ) from e
 
     async def translate_to_russian(self, text: str) -> str:
         """Translate text to Russian"""

@@ -8,7 +8,7 @@ from app.core.data_cleanup import cleanup_service
 from app.core.repository_factory import repository_factory
 from app.database.connection import get_db_session
 from app.models.database import User
-from app.openai_service.service import OpenAIService
+from app.openai_service.service import DigestCreationError, OpenAIService
 from app.telegram.service import TelegramService
 from app.whatsapp.official_service import WhatsAppOfficialService
 from app.whatsapp.service import WhatsAppService
@@ -267,9 +267,19 @@ class DigestScheduler:
                 logger.info(f"No important messages for user {user.username}")
                 return
 
-            digest_content = await self.openai_service.create_digest_by_chats(
-                chat_messages
-            )
+            try:
+                digest_content = await self.openai_service.create_digest_by_chats(
+                    chat_messages
+                )
+            except DigestCreationError as e:
+                logger.error(
+                    f"AI service failed to create digest for user {user.username}: {e}. "
+                    f"{total_important_messages} messages preserved for next cycle."
+                )
+                await self._notify_admin_digest_failure(
+                    user, e, total_important_messages
+                )
+                return
 
             telegram_sent = False
             whatsapp_sent = False
@@ -366,6 +376,46 @@ class DigestScheduler:
         except Exception as e:
             logger.error(f"Error creating digest for user {user.username}: {e}")
             raise
+
+    async def _notify_admin_digest_failure(
+        self,
+        user: User,
+        error: DigestCreationError,
+        message_count: int,
+    ):
+        """Notify admin via Telegram when digest creation fails due to AI issues."""
+        try:
+            service_status = self.openai_service.get_service_status()
+            cb_state = service_status.get("circuit_breaker_state", "unknown")
+            failure_count = service_status.get("failure_count", "unknown")
+
+            cause_detail = str(error.cause) if error.cause else "N/A"
+
+            message = (
+                f"⚠️ **Ошибка создания дайджеста**\n\n"
+                f"👤 Пользователь: {user.username}\n"
+                f"📩 Сообщений ожидает: {message_count}\n"
+                f"❌ Ошибка: {error}\n"
+                f"🔍 Причина: {cause_detail}\n\n"
+                f"🔌 Circuit Breaker: {cb_state}\n"
+                f"💥 Неудачных вызовов: {failure_count}\n\n"
+                f"⏰ {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+                f"💡 Проверьте: API-ключ OpenAI, лимиты биллинга, "
+                f"доступность API."
+            )
+
+            with get_db_session() as db:
+                admin_user = repository_factory.get_user_repository().get_by_id(
+                    db, settings.ADMIN_USER_ID
+                )
+                if admin_user and admin_user.telegram_channel_id:
+                    await self.telegram_service.send_notification(
+                        admin_user.telegram_channel_id, message
+                    )
+        except Exception as notify_err:
+            logger.error(
+                f"Failed to send admin notification about digest failure: {notify_err}"
+            )
 
     def stop_scheduler(self):
         """Stop the scheduler"""

@@ -7,7 +7,7 @@ import pytest
 from app.middleware.circuit_breaker import CircuitBreakerOpenError
 from app.middleware.openai_rate_limiter import RateLimitExceeded
 from app.openai_service.analyzer import MessageAnalyzer
-from app.openai_service.service import OpenAIService
+from app.openai_service.service import DigestCreationError, OpenAIService
 
 
 class TestMessageAnalyzer:
@@ -288,26 +288,24 @@ class TestOpenAIService:
         self.service.circuit_breaker.call.assert_called_once()
 
     async def test_create_digest_rate_limit_exceeded(self):
-        """Test digest creation with rate limit exceeded"""
+        """Test digest creation with rate limit exceeded raises DigestCreationError"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=RateLimitExceeded("Rate limit")
         )
         messages = [{"chat_name": "Chat1", "sender": "User1", "content": "Message1"}]
 
-        result = await self.service.create_digest(messages)
-
-        assert "API rate limits" in result
+        with pytest.raises(DigestCreationError, match="rate limits"):
+            await self.service.create_digest(messages)
 
     async def test_create_digest_circuit_breaker_open(self):
-        """Test digest creation with circuit breaker open"""
+        """Test digest creation with circuit breaker open raises DigestCreationError"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=CircuitBreakerOpenError("Circuit open")
         )
         messages = [{"chat_name": "Chat1", "sender": "User1", "content": "Message1"}]
 
-        result = await self.service.create_digest(messages)
-
-        assert "AI service issues" in result
+        with pytest.raises(DigestCreationError, match="AI service issues"):
+            await self.service.create_digest(messages)
 
     @patch.object(OpenAIService, "_retry_with_backoff")
     @patch.object(OpenAIService, "_with_rate_limiting")
@@ -328,15 +326,14 @@ class TestOpenAIService:
         self.service.circuit_breaker.call.assert_called_once()
 
     async def test_create_digest_by_chats_rate_limit_exceeded(self):
-        """Test digest creation by chats with rate limit exceeded"""
+        """Test digest creation by chats with rate limit exceeded raises DigestCreationError"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=RateLimitExceeded("Rate limit")
         )
         chat_messages = {"Chat1": [{"content": "Message1", "importance": 4}]}
 
-        result = await self.service.create_digest_by_chats(chat_messages)
-
-        assert "API rate limits" in result
+        with pytest.raises(DigestCreationError, match="rate limits"):
+            await self.service.create_digest_by_chats(chat_messages)
 
     @patch.object(OpenAIService, "_retry_with_backoff")
     @patch.object(OpenAIService, "_with_rate_limiting")
