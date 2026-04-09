@@ -637,7 +637,7 @@ async def get_user_resource_savings(
 @router.get("/resource-savings-page", response_class=HTMLResponse)
 async def resource_savings_page(request: Request):
     """Resource savings metrics page"""
-    return templates.TemplateResponse("resource_savings.html", {"request": request})
+    return templates.TemplateResponse(request, "resource_savings.html")
 
 
 @router.get("/system/status")

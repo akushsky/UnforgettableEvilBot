@@ -65,14 +65,14 @@ def verify_admin_password(password: str) -> bool:
 def get_admin_login_page(request: Request) -> HTMLResponse:
     """Get admin login page"""
     return templates.TemplateResponse(
-        "admin_login.html", {"request": request, "error": None}
+        request, "admin_login.html", context={"error": None}
     )
 
 
 def get_admin_login_page_with_error(request: Request, error: str) -> HTMLResponse:
     """Get admin login page with error message"""
     return templates.TemplateResponse(
-        "admin_login.html", {"request": request, "error": error}
+        request, "admin_login.html", context={"error": error}
     )
 
 

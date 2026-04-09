@@ -79,9 +79,9 @@ async def main_dashboard(request: Request):
             }
 
         return templates.TemplateResponse(
+            request,
             "dashboard.html",
-            {
-                "request": request,
+            context={
                 "stats": {
                     "user_count": user_count,
                     "active_users": active_users,
@@ -99,9 +99,9 @@ async def main_dashboard(request: Request):
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return templates.TemplateResponse(
+            request,
             "dashboard.html",
-            {
-                "request": request,
+            context={
                 "error": str(e),
                 "stats": {
                     "resource_savings": {

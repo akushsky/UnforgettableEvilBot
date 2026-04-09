@@ -26,9 +26,7 @@ async def users_page(request: Request, db: Session = Depends(get_db)):
     """User management page"""
     require_admin_auth(request)
     users = repository_factory.get_user_repository().get_all(db)
-    return templates.TemplateResponse(
-        "users.html", {"request": request, "users": users}
-    )
+    return templates.TemplateResponse(request, "users.html", context={"users": users})
 
 
 @router.post("/users/create")
@@ -96,9 +94,9 @@ async def user_detail(user_id: int, request: Request, db: Session = Depends(get_
     )
 
     return templates.TemplateResponse(
+        request,
         "user_detail.html",
-        {
-            "request": request,
+        context={
             "user": user,
             "monitored_chats": monitored_chats,
             "last_digest": last_digest,

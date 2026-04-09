@@ -441,4 +441,4 @@ async def trigger_health_check():
 @router.get("/monitoring/dashboard")
 async def monitoring_dashboard(request: Request):
     """Monitoring dashboard"""
-    return templates.TemplateResponse("monitoring_dashboard.html", {"request": request})
+    return templates.TemplateResponse(request, "monitoring_dashboard.html")
