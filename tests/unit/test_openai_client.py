@@ -200,6 +200,58 @@ class TestOpenAIClient:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_make_request_with_system_message(self):
+        """Test API request includes system message when provided"""
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "Response"
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 20
+        mock_response.usage.total_tokens = 30
+
+        self.client.client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch("app.openai_service.client.openai_monitor"):
+            await self.client.make_request(
+                "User prompt", system_message="You are helpful"
+            )
+
+            self.client.client.chat.completions.create.assert_called_once()
+            call_kwargs = self.client.client.chat.completions.create.call_args
+            messages = call_kwargs.kwargs["messages"]
+            assert messages[0] == {"role": "system", "content": "You are helpful"}
+            assert messages[1] == {"role": "user", "content": "User prompt"}
+
+    @pytest.mark.asyncio
+    async def test_make_request_reasoning_model_prepends_system_message(self):
+        """Test that reasoning models get system message prepended to user prompt"""
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "Response"
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 20
+        mock_response.usage.total_tokens = 30
+
+        self.client.client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch("app.openai_service.client.openai_monitor"):
+            await self.client.make_request(
+                "User prompt", model="o3-mini", system_message="You are helpful"
+            )
+
+            call_kwargs = self.client.client.chat.completions.create.call_args
+            messages = call_kwargs.kwargs["messages"]
+            # No system message — it should be prepended to the user prompt
+            assert len(messages) == 1
+            assert messages[0]["role"] == "user"
+            assert "You are helpful" in messages[0]["content"]
+            assert "User prompt" in messages[0]["content"]
+
+    @pytest.mark.asyncio
     async def test_validate_input_whitespace_only(self):
         """Test input validation with whitespace-only string"""
         result = await self.client.validate_input("   \n\t  ")

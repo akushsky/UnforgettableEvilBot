@@ -30,16 +30,28 @@ class OpenAIClient(BaseService):
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        system_message: str | None = None,
     ) -> str:
         """Execute request to OpenAI API"""
         model = model or settings.OPENAI_MODEL
         max_tokens = max_tokens or settings.OPENAI_MAX_TOKENS
         temperature = temperature or settings.OPENAI_TEMPERATURE
 
+        # Reasoning models don't support system messages;
+        # prepend as context in the user prompt instead.
+        if model in self.REASONING_MODELS and system_message:
+            prompt = f"{system_message}\n\n---\n\n{prompt}"
+            system_message = None
+
         try:
+            messages: list[dict[str, str]] = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": prompt})
+
             kwargs: dict = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
             }
             if model in self.REASONING_MODELS:
                 # Reasoning models spend most of max_completion_tokens on

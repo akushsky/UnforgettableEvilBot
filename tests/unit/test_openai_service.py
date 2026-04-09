@@ -38,7 +38,7 @@ class TestMessageAnalyzer:
         ]
         prompt = self.analyzer._build_digest_prompt(messages)
 
-        assert "Create a brief digest" in prompt
+        assert "Составь краткий дайджест" in prompt
         assert "Chat1" in prompt
         assert "Chat2" in prompt
         assert "Message1" in prompt
@@ -55,7 +55,7 @@ class TestMessageAnalyzer:
         }
         prompt = self.analyzer._build_digest_by_chats_prompt(chat_messages)
 
-        assert "Create a structured digest" in prompt
+        assert "Составь дайджест важных сообщений" in prompt
         assert "Chat1" in prompt
         assert "Chat2" in prompt
         assert "Message1" in prompt
@@ -67,9 +67,9 @@ class TestMessageAnalyzer:
         text = "Hello world"
         prompt = self.analyzer._build_translation_prompt(text)
 
-        assert "Translate the following text" in prompt
+        assert "Переведи следующий текст" in prompt
         assert text in prompt
-        assert "Translate only the text" in prompt
+        assert "Переведи только текст" in prompt
 
     def test_parse_importance_valid(self):
         """Test parsing valid importance scores"""

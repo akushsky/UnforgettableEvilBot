@@ -11,6 +11,36 @@ logger = get_logger(__name__)
 class MessageAnalyzer(BaseService):
     """Message analyzer - only importance analysis and digest creation"""
 
+    _DIGEST_SYSTEM_PROMPT = (
+        "Ты — помощник русскоязычной семьи, живущей в Израиле. "
+        "Твоя задача — читать сообщения из семейных и школьных WhatsApp-чатов на иврите "
+        "и составлять краткий, живой дайджест на русском языке.\n\n"
+        "Требования к языку:\n"
+        "— Пиши на естественном, грамотном русском языке. Никакого подстрочника.\n"
+        "— Стиль — информационный: кратко, по делу, без воды.\n"
+        "— Формулируй так, как рассказал бы живой человек: "
+        "«В школе отменили занятия в четверг», а не «Занятия — отменены — четверг».\n"
+        "— Не переводи дословно: передавай смысл, а не слова.\n\n"
+        "Обработка иврита:\n"
+        "— Имена людей оставляй как есть или давай русскую транслитерацию: "
+        "הדס → Хадас, יוסי → Йоси.\n"
+        "— Названия мест, школ, организаций — транслитерируй с пояснением "
+        "при первом упоминании, если это не очевидно из контекста.\n"
+        "— Даты и время переводи полностью: "
+        "יום חמישי → четверг, 10:00 בבוקר → 10:00 утра.\n"
+        "— Всё остальное — описывай на русском, своими словами.\n\n"
+        "Форматирование:\n"
+        "— Используй эмодзи-индикаторы важности (🔴🟡🟢) строго по данным, "
+        "не меняя уровень.\n"
+        "— Не придумывай информацию, которой нет в сообщениях."
+    )
+
+    _TRANSLATION_SYSTEM_PROMPT = (
+        "Ты — переводчик с иврита на русский для русскоязычной семьи в Израиле. "
+        "Переводи естественно, не дословно. "
+        "Имена собственные транслитерируй на русский."
+    )
+
     def __init__(self, client: OpenAIClient):
         """Init  .
 
@@ -68,18 +98,16 @@ parentheses are escaped.
         for msg in messages:
             messages_text += f"\n[{msg['chat_name']}] {msg['sender']}: {msg['content']}"
 
-        return f"""
-        Create a brief digest of the most important events based on these messages from WhatsApp chats.
-        Group by topics, highlight key points.
-        Use emojis for better perception.
-        Format: topic header, brief description.
+        return f"""Составь краткий дайджест самых важных событий на основе этих сообщений из WhatsApp-чатов.
+Сгруппируй по темам, выдели ключевые моменты.
+Используй эмодзи для наглядности.
+Формат: заголовок темы, краткое описание события своими словами.
 
-        {self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
+{self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
 
-        Messages:{messages_text}
+Сообщения:{messages_text}
 
-        Create a structured digest in Russian language.
-        """
+Перескажи важные события кратко и естественно."""
 
     def _build_digest_by_chats_prompt(
         self, chat_messages: dict[str, list[dict]]
@@ -99,40 +127,36 @@ parentheses are escaped.
                 )
                 chat_sections += f"{importance_emoji} {msg['content']}\n"
 
-        return f"""
-        Create a structured digest of important messages, grouped by chats.
+        return f"""Составь дайджест важных сообщений, сгруппированный по чатам.
 
-        IMPORTANT: Use ONLY the chats and messages provided below.
-        DO NOT invent additional chats or messages.
+ВАЖНО: используй ТОЛЬКО чаты и сообщения, приведённые ниже.
+НЕ придумывай дополнительные чаты или сообщения.
 
-        For each chat, create a separate section with a header and brief summary of important events.
-        Use emojis for better perception and highlighting importance.
+Для каждого чата — отдельный раздел с заголовком и кратким пересказом важных событий.
+Сохраняй эмодзи-индикаторы важности (🔴🟡🟢) из исходных данных.
 
-        {self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
+{self._MARKDOWNV2_FORMATTING_INSTRUCTIONS}
 
-        Format example:
-        📱 *CHAT NAME*
-        ─────────────────
-        🔴 *Key event* — _brief description_
-        🟡 Some update about topic
-        🟢 Minor note
+Пример оформления:
 
-        Messages by chats:{chat_sections}
+📱 *Школа «Мигдаль»*
+─────────────────
+🔴 *Занятия отменены в четверг* — _из\\-за ракетной тревоги, уроки перенесены на воскресенье_
+🟡 Собрание родителей перенесли на 18:00 вместо 17:00
+🟢 Хадас напомнила принести тетради по математике
 
-        Create a digest in Russian language, grouped by chats.
-        For each chat, provide a brief summary of important events.
-        Use ONLY the provided data, do not add anything of your own.
-        """
+Сообщения по чатам:{chat_sections}
+
+Перескажи важные события по каждому чату кратко и естественно.
+Используй ТОЛЬКО предоставленные данные."""
 
     def _build_translation_prompt(self, text: str) -> str:
         """Build prompt for translation"""
-        return f"""
-        Translate the following text to Russian language, preserving meaning and context:
+        return f"""Переведи следующий текст на русский язык. Сохрани смысл и контекст.
 
-        {text}
+{text}
 
-        Translate only the text, without additional comments.
-        """
+Переведи только текст, без дополнительных комментариев."""
 
     def _parse_importance(self, response: str) -> int:
         """Parse importance score from response"""
@@ -168,7 +192,12 @@ parentheses are escaped.
             return "❌ Ошибка при создании дайджеста."
 
         prompt = self._build_digest_prompt(messages)
-        digest = await self.client.make_request(prompt, max_tokens=600, temperature=0.7)
+        digest = await self.client.make_request(
+            prompt,
+            max_tokens=600,
+            temperature=0.7,
+            system_message=self._DIGEST_SYSTEM_PROMPT,
+        )
 
         self.log_operation("digest_creation", {"messages_count": len(messages)})
         return digest
@@ -184,7 +213,10 @@ parentheses are escaped.
 
         prompt = self._build_digest_by_chats_prompt(chat_messages)
         digest = await self.client.make_request(
-            prompt, max_tokens=settings.OPENAI_MAX_TOKENS, temperature=0.7
+            prompt,
+            max_tokens=settings.OPENAI_MAX_TOKENS,
+            temperature=0.7,
+            system_message=self._DIGEST_SYSTEM_PROMPT,
         )
 
         self.log_operation(
@@ -200,7 +232,10 @@ parentheses are escaped.
 
         prompt = self._build_translation_prompt(text)
         translation = await self.client.make_request(
-            prompt, max_tokens=200, temperature=settings.OPENAI_TEMPERATURE
+            prompt,
+            max_tokens=200,
+            temperature=settings.OPENAI_TEMPERATURE,
+            system_message=self._TRANSLATION_SYSTEM_PROMPT,
         )
 
         self.log_operation("text_translation", {"original_length": len(text)})
