@@ -111,7 +111,12 @@ async def rename_monitored_chat(
 
 @router.get("/users/{user_id}/qr")
 async def get_user_qr_code(user_id: int, db: Session = Depends(get_db)):
-    """Get a QR code for the user"""
+    """Get a QR code for the user.
+
+    Brand-new users have no Baileys client yet. The admin UI historically only
+    polled GET /qr, which 404s forever unless something else called
+    POST /initialize. Kick off initialize on 404 so pairing can proceed.
+    """
     repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
 
     try:
@@ -133,7 +138,36 @@ async def get_user_qr_code(user_id: int, db: Session = Depends(get_db)):
                     "message": "QR-код готов для сканирования",
                 }
             elif qr_response.status_code == 404:
-                logger.debug("QR code not ready yet")
+                whatsapp_service = get_whatsapp_service()
+                started = await whatsapp_service.initialize_client(user_id)
+                if not started:
+                    logger.error(
+                        f"QR not available and initialize failed for user {user_id}"
+                    )
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "status": "error",
+                            "message": (
+                                "Не удалось запустить WhatsApp клиент для генерации QR-кода"
+                            ),
+                        },
+                    )
+
+                # Baileys may already have emitted a QR during initialize.
+                qr_retry = await client.get(f"{bridge_url}/qr/{user_id}")
+                if qr_retry.status_code == 200:
+                    qr_data = qr_retry.json()
+                    return {
+                        "status": "success",
+                        "qr_code": qr_data.get("qrCode"),
+                        "timestamp": qr_data.get("timestamp"),
+                        "message": "QR-код готов для сканирования",
+                    }
+
+                logger.debug(
+                    f"Client initialized for user {user_id}; QR still pending"
+                )
                 return {
                     "status": "pending",
                     "message": "QR-код пока не готов, попробуйте через несколько секунд",
