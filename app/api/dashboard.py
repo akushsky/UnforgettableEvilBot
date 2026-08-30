@@ -1,15 +1,19 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.core.tracing import trace_manager
 from app.database.connection import get_db_session
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["Web Interface"])
+router = APIRouter(
+    tags=["Web Interface"],
+    dependencies=[Depends(get_admin_auth_dependency)],
+)
 templates = Jinja2Templates(directory="web/templates")
 
 

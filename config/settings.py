@@ -89,6 +89,9 @@ class Settings:
             "WHATSAPP_BRIDGE_URL", "http://localhost:3000"
         )
 
+        # Shared secret the Baileys bridge must present on webhook calls
+        self.BRIDGE_WEBHOOK_SECRET = os.getenv("BRIDGE_WEBHOOK_SECRET", "")
+
         # WhatsApp Business API settings
         self.WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
         self.WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -97,11 +100,6 @@ class Settings:
         # Async processor settings
         self.SKIP_ASYNC_PROCESSOR = (
             os.getenv("SKIP_ASYNC_PROCESSOR", "false").lower() == "true"
-        )
-
-        # Repository optimization settings
-        self.USE_OPTIMIZED_REPOSITORIES = (
-            os.getenv("USE_OPTIMIZED_REPOSITORIES", "false").lower() == "true"
         )
 
         # Testing settings
@@ -127,6 +125,13 @@ class Settings:
             ("TELEGRAM_BOT_TOKEN", self.TELEGRAM_BOT_TOKEN),
             ("SECRET_KEY", self.SECRET_KEY),
         ]
+
+        # Outside DEBUG the bridge webhooks fail closed without a shared
+        # secret, so a missing value means silent inbound message loss.
+        if not self.DEBUG:
+            required_vars.append(
+                ("BRIDGE_WEBHOOK_SECRET", (self.BRIDGE_WEBHOOK_SECRET or "").strip())
+            )
 
         missing_vars = []
         for var_name, var_value in required_vars:

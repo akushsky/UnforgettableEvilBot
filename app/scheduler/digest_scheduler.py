@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.data_cleanup import cleanup_service
 from app.core.repository_factory import repository_factory
+from app.core.user_utils import get_user_settings
 from app.database.connection import get_db_session
 from app.models.database import User
 from app.openai_service.service import DigestCreationError, OpenAIService
@@ -16,6 +17,9 @@ from config.logging_config import get_logger
 from config.settings import settings
 
 logger = get_logger(__name__)
+
+# Matches the UserSettings.min_importance_level column default.
+DEFAULT_MIN_IMPORTANCE_LEVEL = 3
 
 
 class DigestScheduler:
@@ -137,7 +141,11 @@ class DigestScheduler:
         logs_deleted: int,
         users_processed: int,
     ):
-        """Send notification about cleanup results"""
+        """Send cleanup results to the administrator.
+
+        Housekeeping stats are operator information, so they go only to
+        ADMIN_USER_ID - the same recipient as the cleanup error notification.
+        """
         try:
             message = f"""🧹 **Ежедневная очистка данных завершена**
 
@@ -150,19 +158,13 @@ class DigestScheduler:
 ⏰ Время: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")} UTC"""
 
             with get_db_session() as db:
-                users = repository_factory.get_user_repository().get_active_users_with_telegram(
-                    db
+                admin_user = repository_factory.get_user_repository().get_by_id(
+                    db, settings.ADMIN_USER_ID
                 )
-
-                for user in users:
-                    try:
-                        await self.telegram_service.send_notification(
-                            user.telegram_channel_id, message
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to send cleanup notification to user {user.username}: {e}"
-                        )
+                if admin_user and admin_user.telegram_channel_id:
+                    await self.telegram_service.send_notification(
+                        admin_user.telegram_channel_id, message
+                    )
 
         except Exception as e:
             logger.error(f"Error sending cleanup notification: {e}")
@@ -223,6 +225,18 @@ class DigestScheduler:
             db, user.id, interval
         )
 
+    def _get_min_importance_level(self, user: User, db: Session) -> int:
+        """Digest importance threshold configured by the user."""
+        try:
+            user_settings = get_user_settings(user.id, db)
+            return int(user_settings.min_importance_level)
+        except Exception as e:
+            logger.warning(
+                f"Could not read min_importance_level for user {user.username}: {e}. "
+                f"Using default {DEFAULT_MIN_IMPORTANCE_LEVEL}."
+            )
+            return DEFAULT_MIN_IMPORTANCE_LEVEL
+
     async def create_and_send_digest(self, user: User, db: Session):
         """Create and send a digest for the user"""
         try:
@@ -236,14 +250,15 @@ class DigestScheduler:
                 logger.info(f"No monitored chats for user {user.username}")
                 return
 
+            min_importance_level = self._get_min_importance_level(user, db)
+
             chat_messages: dict[str, list[dict[str, Any]]] = {}
             total_important_messages = 0
             processed_message_ids = []
-            interval = user.digest_interval_hours or 4
 
             for chat in monitored_chats:
                 messages = repository_factory.get_whatsapp_message_repository().get_important_messages_for_digest(
-                    db, chat.id, interval, 3
+                    db, chat.id, min_importance_level
                 )
 
                 if messages:
@@ -315,9 +330,27 @@ class DigestScheduler:
                             result = await self.whatsapp_official_service.send_digest_to_multiple_phones(
                                 phone_numbers, digest_content, user.username
                             )
-                            whatsapp_sent = result["success_count"] > 0
-                            if result["error_count"] > 0:
-                                whatsapp_error = f"Failed to send to {result['error_count']} phone numbers"
+                            success_count = result["success_count"]
+                            error_count = result["error_count"]
+                            # Partial delivery must not count as sent: marking
+                            # the messages processed here would silently drop
+                            # them for the phones that never received them.
+                            # The failure branch below still writes a
+                            # digest_log row, so the phones that did fail get
+                            # another attempt after the user's digest interval
+                            # rather than every 5 minutes.
+                            whatsapp_sent = error_count == 0 and success_count == len(
+                                phone_numbers
+                            )
+                            if not whatsapp_sent:
+                                whatsapp_error = (
+                                    f"Delivered to {success_count}/{len(phone_numbers)} "
+                                    f"phone numbers"
+                                )
+                                logger.error(
+                                    f"Partial WhatsApp digest delivery for user "
+                                    f"{user.username}: {whatsapp_error}"
+                                )
                         else:
                             whatsapp_error = "No WhatsApp phone numbers configured"
                             logger.warning(
@@ -346,19 +379,20 @@ class DigestScheduler:
                             f"Failed to send fallback Telegram digest to user {user.username}: {e}"
                         )
 
+            digest_log_data = {
+                "user_id": user.id,
+                "digest_content": digest_content,
+                "message_count": total_important_messages,
+                "telegram_sent": telegram_sent,
+                "telegram_error": telegram_error,
+                "whatsapp_sent": whatsapp_sent,
+                "whatsapp_error": whatsapp_error,
+            }
+
             if telegram_sent or whatsapp_sent:
                 repository_factory.get_whatsapp_message_repository().mark_as_processed(
                     db, processed_message_ids
                 )
-                digest_log_data = {
-                    "user_id": user.id,
-                    "digest_content": digest_content,
-                    "message_count": total_important_messages,
-                    "telegram_sent": telegram_sent,
-                    "telegram_error": telegram_error,
-                    "whatsapp_sent": whatsapp_sent,
-                    "whatsapp_error": whatsapp_error,
-                }
                 repository_factory.get_digest_log_repository().create(
                     db, digest_log_data
                 )
@@ -370,7 +404,23 @@ class DigestScheduler:
                 logger.error(
                     f"Digest delivery failed for user {user.username}. "
                     f"Telegram error: {telegram_error}, WhatsApp error: {whatsapp_error}. "
-                    f"Will retry next cycle."
+                    f"{total_important_messages} messages preserved for the next cycle."
+                )
+                # The messages stay unprocessed so the next successful digest
+                # still carries them, but the failed attempt is logged anyway:
+                # should_create_digest() keys off the last digest_log row, so
+                # without it every 5-minute tick would regenerate and re-attempt
+                # delivery. With it, the retry (including the phone numbers that
+                # failed in a partial WhatsApp delivery) waits a full interval
+                # instead of spamming both the AI and the recipients.
+                repository_factory.get_digest_log_repository().create(
+                    db, digest_log_data
+                )
+                await self._notify_admin_delivery_failure(
+                    user,
+                    telegram_error,
+                    whatsapp_error,
+                    total_important_messages,
                 )
 
         except Exception as e:
@@ -415,6 +465,43 @@ class DigestScheduler:
         except Exception as notify_err:
             logger.error(
                 f"Failed to send admin notification about digest failure: {notify_err}"
+            )
+
+    async def _notify_admin_delivery_failure(
+        self,
+        user: User,
+        telegram_error: str | None,
+        whatsapp_error: str | None,
+        message_count: int,
+    ):
+        """Notify admin when a generated digest could not be delivered.
+
+        Covers both a total failure and a partial WhatsApp fan-out, since the
+        latter is treated as undelivered: the messages are kept for the retry.
+        """
+        try:
+            message = (
+                f"⚠️ **Дайджест не доставлен**\n\n"
+                f"👤 Пользователь: {user.username}\n"
+                f"📩 Сообщений ожидает: {message_count}\n"
+                f"✈️ Telegram: {telegram_error or 'не использовался'}\n"
+                f"📱 WhatsApp: {whatsapp_error or 'не использовался'}\n\n"
+                f"⏰ {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+                f"💡 Сообщения сохранены и войдут в следующий дайджест."
+            )
+
+            with get_db_session() as db:
+                admin_user = repository_factory.get_user_repository().get_by_id(
+                    db, settings.ADMIN_USER_ID
+                )
+                if admin_user and admin_user.telegram_channel_id:
+                    await self.telegram_service.send_notification(
+                        admin_user.telegram_channel_id, message
+                    )
+        except Exception as notify_err:
+            logger.error(
+                f"Failed to send admin notification about delivery failure: "
+                f"{notify_err}"
             )
 
     def stop_scheduler(self):

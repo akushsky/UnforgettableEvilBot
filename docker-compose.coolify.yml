@@ -23,9 +23,12 @@ services:
 
       # Core application settings
       - PYTHON_BACKEND_URL=http://127.0.0.1:9876
+      - BRIDGE_WEBHOOK_SECRET=${BRIDGE_WEBHOOK_SECRET:-}
       - DEBUG=false
       - LOG_LEVEL=INFO
       - WHATSAPP_SESSION_PATH=/app/whatsapp_sessions
+      # start.sh triggers /restore-all once the API is reachable
+      - RESTORE_ON_START=0
 
       # Performance optimization
       - MAX_WORKERS=8
@@ -35,10 +38,6 @@ services:
       # Cleanup settings
       - CLEANUP_OLD_MESSAGES_DAYS=30
       - CLEANUP_OLD_SYSTEM_LOGS_DAYS=7
-
-      # Repository optimization
-      - USE_OPTIMIZED_REPOSITORIES=true
-
       # OpenAI settings (use Coolify env vars with safe defaults)
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-1000}

@@ -1,3 +1,4 @@
+import hmac
 import time
 from collections import defaultdict
 
@@ -5,8 +6,14 @@ from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config.logging_config import get_logger
+from config.settings import settings
 
 logger = get_logger(__name__)
+
+# HTTP header name (not a credential). Avoid *SECRET* in the identifier — Bandit B105.
+BRIDGE_AUTH_HEADER = "X-Bridge-Secret"
+FORWARDING_HEADERS = ("X-Forwarded-For", "X-Real-IP")
+LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class RateLimiterMiddleware(BaseHTTPMiddleware):
@@ -30,8 +37,8 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
             request: Description of request.
             call_next: Description of call_next.
         """
-        # Apply rate limiting only to webhook endpoints
-        if request.url.path.startswith("/webhook/"):
+        # Apply rate limiting only to unauthenticated external webhook calls
+        if request.url.path.startswith("/webhook/") and not self._is_exempt(request):
             client_ip = self._get_client_ip(request)
             current_time = time.time()
 
@@ -59,16 +66,54 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+    def _is_exempt(self, request: Request) -> bool:
+        """Whether the caller is the trusted in-container bridge.
+
+        The bridge posts one webhook per WhatsApp message and legitimately
+        bursts past the per-minute budget, so it is exempted - but only when it
+        proves itself with the shared secret or reaches us over the loopback
+        interface it actually uses. Everything else stays rate limited.
+        """
+        return self._has_valid_bridge_secret(request) or self._is_loopback_peer(request)
+
+    @staticmethod
+    def _has_valid_bridge_secret(request: Request) -> bool:
+        """Constant-time check of the bridge shared secret, when configured."""
+        configured_secret = getattr(settings, "BRIDGE_WEBHOOK_SECRET", "") or ""
+        if not configured_secret:
+            return False
+
+        provided_secret = request.headers.get(BRIDGE_AUTH_HEADER)
+        if not provided_secret:
+            return False
+
+        return hmac.compare_digest(
+            provided_secret.encode("utf-8"), configured_secret.encode("utf-8")
+        )
+
+    @staticmethod
+    def _is_loopback_peer(request: Request) -> bool:
+        """Whether the TCP peer itself is loopback.
+
+        Deliberately ignores X-Forwarded-For / X-Real-IP: those are attacker
+        controlled, so honouring them here would let any external client claim
+        to be 127.0.0.1 and skip the limiter. Their mere presence also means the
+        request was proxied rather than sent by the local bridge.
+        """
+        if any(request.headers.get(header) for header in FORWARDING_HEADERS):
+            return False
+
+        peer_host = request.client.host if request.client else None
+        return bool(peer_host) and peer_host in LOOPBACK_ADDRESSES
+
     def _get_client_ip(self, request: Request) -> str:
-        """Get client IP considering proxy headers"""
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
+        """Bucket key for the limiter: the TCP peer, never proxy headers.
 
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
-
+        X-Forwarded-For / X-Real-IP are caller controlled, so keying buckets on
+        them lets a single client mint a fresh bucket per request and bypass
+        the limit entirely. Behind a real proxy this collapses all callers into
+        the proxy's bucket, which throttles too much rather than too little.
+        """
         return (
             request.client.host if request.client and request.client.host else "unknown"
         )

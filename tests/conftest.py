@@ -8,3 +8,5 @@ def pytest_configure(config):
     os.environ.setdefault("ADMIN_PASSWORD", "test-password")
     os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-bot-token")
     os.environ.setdefault("SECRET_KEY", "test-secret-key")
+    # Required outside DEBUG since the bridge webhooks fail closed without it.
+    os.environ.setdefault("BRIDGE_WEBHOOK_SECRET", "test-bridge-secret")

@@ -1,100 +1,113 @@
-# 🔄 How WhatsApp Integration Works in Production
+# How WhatsApp Integration Works
 
-## 📋 Answers to Your Questions
+## Two separate WhatsApp stacks
 
-### ❓ How does WhatsApp integration work?
+Do not conflate these when debugging:
 
-**Connection Architecture:**
+| Stack | Library | Direction | Used for |
+|-------|---------|-----------|----------|
+| Bridge | [Baileys](https://github.com/WhiskeySockets/Baileys) (`@whiskeysockets/baileys`) | inbound | receiving messages, QR pairing, chat list |
+| Business API | Meta Cloud API (HTTP) | outbound | delivering digests (`app/whatsapp/official_service.py`) |
+
+This document is about the **bridge**.
+
+## Connection architecture
+
 ```
-WhatsApp Web ←→ Puppeteer ←→ Node.js Bridge ←→ Python Backend
-     ↓
-Local sessions (files)
+WhatsApp servers  ←(WebSocket, Baileys)→  Node bridge (:3000)  →  FastAPI (:9876)
+                                               ↓
+                              whatsapp_sessions/ (creds + state files)
 ```
 
-**1. Persistent Connection (not reactive!):**
-- WhatsApp clients connect when the system starts and work continuously
-- Messages are received in real-time via webhooks
-- No need to connect each time for digest generation
+Baileys speaks the WhatsApp multi-device protocol over a WebSocket directly.
+There is **no** Puppeteer, no headless Chrome, and no `.wwebjs_cache/` — those
+belong to `whatsapp-web.js`, which this project no longer uses.
 
-### ❓ What happens when the container restarts?
+**Connections are persistent, not per-request:**
 
-**✅ SOLUTION: Automatic Connection Recovery**
+- Sockets are opened when the bridge starts and stay open.
+- Incoming messages are pushed to the backend via webhook in real time.
+- Digest generation never opens a WhatsApp connection; it only reads messages
+  already stored in Postgres.
 
-1. **Session Persistence:**
-   - WhatsApp Web sessions are saved to files (`/app/whatsapp_sessions/`)
-   - Docker volume is mounted for data persistence
-   - Sessions survive container restarts
+## What happens on container restart
 
-2. **Automatic Reconnection:**
+1. **Session persistence.** Baileys credentials are written by
+   `useMultiFileAuthState()` into `${WHATSAPP_SESSION_PATH}/session-{user_id}/`
+   (default `/app/whatsapp_sessions` in the container). This path must be a
+   persistent volume — losing it means every user has to re-scan a QR code.
+
+2. **Automatic restoration.** `docker/start.sh` starts the bridge with
+   `RESTORE_ON_START=0` and then calls `POST /restore-all` once the API is
+   answering, so restoration can validate user ids against the backend:
+
    ```javascript
-   // When system starts
    async restoreAllClients() {
-       // Load list of users with saved sessions
-       for (user with saved session) {
-           await this.initializeClientWithReconnect(userId);
-       }
+     // fetch active, non-suspended users from the backend
+     // drop stale persisted state (validateAndCleanupPersistedState)
+     // re-open a socket per remaining user
    }
    ```
 
-3. **Connection Monitoring:**
-   - System checks status of all connections every 5 minutes
-   - Automatically reconnects when disconnection is detected
-   - Telegram notifications about connection status
+3. **Connection monitoring.** The bridge periodically re-checks every socket,
+   reconnects on `connection.close`, and reports status changes to the backend
+   (which can notify over Telegram).
 
-### ❓ When does WhatsApp connection happen?
+## When a connection is established
 
-**NOT during digest generation!** Connection happens:
+- On bridge startup (restoration of existing sessions).
+- When a new user pairs (QR scan).
+- When an existing socket drops (automatic reconnect).
 
-1. **When system starts** - automatic restoration of all sessions
-2. **When adding new user** - initial connection
-3. **When connection breaks** - automatic reconnection
+## Bridge internals (`whatsapp_bridge/bridge.js`)
 
-**Digest generation** only reads already accumulated messages from the database.
-
-## 🔧 Enhanced Architecture for Production
-
-### 1. WhatsApp Bridge (`bridge.js`)
 ```javascript
-class PersistentWhatsAppBridge {
-    constructor() {
-        this.clients = new Map();           // Active clients
-        this.clientStates = new Map();      // Connection states
-        this.reconnectIntervals = new Map(); // Reconnection intervals
-    }
-
-    async restoreAllClients() {
-        // Auto-restoration on startup
-    }
-
-    startAutoReconnect() {
-        // Monitoring every 5 minutes
-    }
+class BaileysWhatsAppBridge {
+  constructor() {
+    this.clients = new Map();           // userId -> WASocket
+    this.clientStates = new Map();      // userId -> state info
+    this.qrCodes = new Map();           // userId -> qr string
+    this.reconnectTimeouts = new Map(); // userId -> timeout
+    this.persistentChats = new Map();   // userId -> cached chats
+  }
 }
 ```
 
-**Key Features:**
-- State persistence in `client_states.json`
-- Automatic reconnection on disconnection
-- Real-time webhooks for new messages
-- Graceful shutdown with state preservation
+Key behaviours:
 
-### 2. WhatsApp Webhooks (`whatsapp_webhooks.py`)
+- Connection state is persisted to `${WHATSAPP_SESSION_PATH}/client_states.json`
+  (older builds wrote it into the bridge working directory; that legacy file is
+  migrated on startup).
+- Stale persisted state can be cleared with `POST /cleanup-stale-state` — see
+  [WHATSAPP_BRIDGE_TROUBLESHOOTING.md](WHATSAPP_BRIDGE_TROUBLESHOOTING.md).
+- Graceful shutdown flushes state before exiting.
+
+## Inbound message flow
+
+`app/api/whatsapp_webhooks.py`:
+
 ```python
 @router.post("/webhook/whatsapp/message")
 async def receive_whatsapp_message():
-    # Receive message in real-time
-    # Analyze importance via OpenAI (in background)
-    # Save to DB for future digests
-    # Urgent notifications for critical messages
+    # authenticate the bridge call
+    # store the message
+    # score importance via OpenAI in the background
+    # send an urgent notification if importance is high enough
 ```
 
-**Message Processing Flow:**
 ```
-WhatsApp → Node.js Bridge → Python Webhook → DB → (Digest on schedule)
-                                         ↓
-                            Urgent notifications (importance ≥5)
+WhatsApp → Baileys bridge → FastAPI webhook → Postgres → (digest on schedule)
+                                            ↓
+                                  urgent notifications
 ```
 
-### 3. Updated Database Models
-Added new fields for state tracking:
-- `whatsapp_last_seen` - last activity
+Suspended users get an HTTP **200** with a "suspended" detail rather than an
+error, so the bridge does not retry-storm.
+
+## Related user fields
+
+`app/models/database.py` tracks bridge state on `User`:
+
+- `whatsapp_connected` — last known socket state
+- `whatsapp_session_id` — session identifier
+- `whatsapp_last_seen` — last activity timestamp

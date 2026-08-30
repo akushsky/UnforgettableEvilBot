@@ -1,124 +1,57 @@
-# Repository Selection System
+# Repository Layer
 
 ## Overview
 
-The system now has a **configuration-based repository selection mechanism** that allows you to choose between basic and optimized repositories based on your environment and performance needs.
+There is **one** repository module: `app/core/repositories.py`. It exposes a
+singleton instance per entity (users, monitored chats, WhatsApp messages, digest
+logs, settings, metrics, …).
 
-## How It Works
+There is no "basic vs optimized" repository split. An earlier design sketched an
+`optimized_repositories.py` selected by a `USE_OPTIMIZED_REPOSITORIES`
+environment variable; neither the module nor the flag exists anymore. The
+repositories are plain SQLAlchemy — no caching layer inside them.
 
-### 1. Configuration Setting
+## Usage
 
-Add this environment variable to control repository selection:
+Import the singleton you need directly:
 
-```bash
-# Use optimized repositories (with caching, batch operations, etc.)
-USE_OPTIMIZED_REPOSITORIES=true
+```python
+from app.core.repositories import user_repository, whatsapp_message_repository
 
-# Use basic repositories (default)
-USE_OPTIMIZED_REPOSITORIES=false
+users = user_repository.get_all(db, skip=0, limit=100)
 ```
 
-### 2. Repository Factory
-
-The system uses a factory pattern to automatically select the appropriate repository:
+`app/core/repository_factory.py` is a thin backward-compatible wrapper that
+returns those same singletons:
 
 ```python
 from app.core.repository_factory import repository_factory
 
-# Get the appropriate repository based on configuration
 user_repo = repository_factory.get_user_repository()
-message_repo = repository_factory.get_whatsapp_message_repository()
-digest_repo = repository_factory.get_digest_log_repository()
 ```
 
-### 3. Repository Types
+Prefer direct imports in new code; do not grow the factory unless a legacy caller
+requires it.
 
-#### Basic Repositories (`repositories.py`)
-- **Simple CRUD operations**
-- **No caching**
-- **Direct database queries**
-- **Lower memory usage**
-- **Suitable for development and low-traffic scenarios**
+## Caching
 
-#### Optimized Repositories (`optimized_repositories.py`)
-- **Redis caching with TTL**
-- **Batch operations**
-- **Database cleanup methods**
-- **Statistics and analytics**
-- **Higher performance for production**
-- **More memory usage due to caching**
+Caching lives outside the repository layer, in `cache_manager`
+(`app/core/cache.py`), and is applied by the services and API routes that need
+it:
 
-## Usage Examples
+- If `REDIS_ENABLED=true` and Redis is reachable, entries are stored in Redis
+  with a TTL and shared across processes.
+- Otherwise an in-process memory cache is used, which is per-worker and lost on
+  restart.
 
-### Before (Manual Selection)
-```python
-# Had to manually choose which repository to import
-from app.core.repositories import user_repository
-# OR
-from app.core.optimized_repositories import optimized_user_repository
-```
+Cache health is reported by `/health` and `/metrics`. The low-hit-ratio warning
+is only raised when Redis is actually attached, because the in-process fallback
+is expected to miss.
 
-### After (Automatic Selection)
-```python
-from app.core.repository_factory import repository_factory
+## Notes
 
-# Automatically gets the right repository based on USE_OPTIMIZED_REPOSITORIES setting
-user_repo = repository_factory.get_user_repository()
-users = user_repo.get_all(db, skip=0, limit=100)
-```
-
-## Migration Status
-
-### ✅ Completed
-- **User API** (`app/api/users.py`) - Now uses factory pattern
-- **Repository Factory** - Created and functional
-- **Configuration** - Added `USE_OPTIMIZED_REPOSITORIES` setting
-
-### 🔄 In Progress
-- **WhatsApp Webhooks** - Still using direct queries
-- **Digest Scheduler** - Still using direct queries
-- **Other services** - Need migration to factory pattern
-
-### 📋 To Do
-1. Migrate WhatsApp webhook handlers to use repositories
-2. Migrate digest scheduler to use repositories
-3. Add optimized version for `MonitoredChatRepository`
-4. Add performance monitoring for repository usage
-
-## Performance Comparison
-
-| Scenario | Basic Repositories | Optimized Repositories |
-|----------|-------------------|----------------------|
-| **Development** | ✅ Fast enough | ⚠️ Overkill |
-| **Low Traffic** | ✅ Good | ✅ Better |
-| **High Traffic** | ❌ Slow | ✅ Excellent |
-| **Memory Usage** | ✅ Low | ⚠️ Higher |
-| **Setup Complexity** | ✅ Simple | ⚠️ Requires Redis |
-
-## Recommendations
-
-### Development Environment
-```bash
-USE_OPTIMIZED_REPOSITORIES=false
-```
-
-### Production Environment
-```bash
-USE_OPTIMIZED_REPOSITORIES=true
-```
-
-### Staging Environment
-```bash
-# Test both configurations
-USE_OPTIMIZED_REPOSITORIES=true  # Test performance
-USE_OPTIMIZED_REPOSITORIES=false # Test stability
-```
-
-## Benefits
-
-1. **Automatic Selection**: No need to manually choose repositories
-2. **Environment Flexibility**: Different configs for different environments
-3. **Performance Optimization**: Use optimized repos in production
-4. **Development Simplicity**: Use basic repos during development
-5. **Gradual Migration**: Can migrate services one by one
-6. **Fallback Safety**: If optimized repos fail, can fall back to basic ones
+- Some call sites (WhatsApp webhooks, digest scheduler) still issue direct
+  SQLAlchemy queries instead of going through repositories. Migrating them is
+  optional cleanup, not a correctness issue.
+- Schema changes go through Alembic (`alembic revision --autogenerate`), never
+  through `Base.metadata.create_all` at runtime.

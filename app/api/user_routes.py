@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.auth.admin_auth import require_admin_auth
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.auth.security import get_password_hash
 from app.core.repository_factory import repository_factory
 from app.database.connection import get_db
@@ -17,29 +17,29 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["web-admin"])
+router = APIRouter(
+    prefix="/admin",
+    tags=["web-admin"],
+    dependencies=[Depends(get_admin_auth_dependency)],
+)
 templates = Jinja2Templates(directory="web/templates")
 
 
 @router.get("/users", response_class=HTMLResponse)
 async def users_page(request: Request, db: Session = Depends(get_db)):
     """User management page"""
-    require_admin_auth(request)
     users = repository_factory.get_user_repository().get_all(db)
     return templates.TemplateResponse(request, "users.html", context={"users": users})
 
 
 @router.post("/users/create")
 async def create_user(
-    request: Request,
     username: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
     """Create a new user"""
-    require_admin_auth(request)
-
     existing_user = repository_factory.get_user_repository().get_by_username(
         db, username
     )
@@ -66,8 +66,6 @@ async def create_user(
 @router.get("/users/{user_id}", response_class=HTMLResponse)
 async def user_detail(user_id: int, request: Request, db: Session = Depends(get_db)):
     """User detail page"""
-    require_admin_auth(request)
-
     user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
     monitored_chats = (
         repository_factory.get_monitored_chat_repository().get_active_chats_for_user(

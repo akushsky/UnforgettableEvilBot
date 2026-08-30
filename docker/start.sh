@@ -57,8 +57,14 @@ log "🔄 Running database migrations..."
 export PYTHONPATH=/app:$PYTHONPATH
 alembic upgrade head
 
+# Sessions and bridge state belong on the persistent volume, not in the bridge working dir.
+export WHATSAPP_SESSION_PATH="${WHATSAPP_SESSION_PATH:-/app/whatsapp_sessions}"
+# Restore is triggered explicitly below, once the API can answer /active-users.
+export RESTORE_ON_START="${RESTORE_ON_START:-0}"
+log "📁 Session path: ${WHATSAPP_SESSION_PATH} (RESTORE_ON_START=${RESTORE_ON_START})"
+
 # Create directories if they don't exist
-mkdir -p /app/whatsapp_sessions
+mkdir -p "${WHATSAPP_SESSION_PATH}"
 mkdir -p /app/logs
 
 # Start WhatsApp Bridge in background

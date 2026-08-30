@@ -26,7 +26,11 @@ async def admin_login(request: Request, password: str = Form(...)):
         session_id = create_admin_session(request)
         response = RedirectResponse(url="/admin/users", status_code=303)
         response.set_cookie(
-            "admin_session", session_id, httponly=True, secure=not settings.DEBUG
+            "admin_session",
+            session_id,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite="strict",
         )
         return response
     else:

@@ -360,25 +360,25 @@ class TestRateLimiterMiddleware:
 
         assert ip == "192.168.1.1"
 
-    def test_get_client_ip_x_forwarded_for(self):
-        """Test getting client IP from X-Forwarded-For header"""
+    def test_get_client_ip_ignores_x_forwarded_for(self):
+        """Spoofable proxy headers must not decide the rate-limit bucket"""
         request = Mock()
         request.client.host = "192.168.1.1"
         request.headers = {"X-Forwarded-For": "10.0.0.1, 10.0.0.2"}
 
         ip = self.middleware._get_client_ip(request)
 
-        assert ip == "10.0.0.1"
+        assert ip == "192.168.1.1"
 
-    def test_get_client_ip_x_real_ip(self):
-        """Test getting client IP from X-Real-IP header"""
+    def test_get_client_ip_ignores_x_real_ip(self):
+        """Spoofable proxy headers must not decide the rate-limit bucket"""
         request = Mock()
         request.client.host = "192.168.1.1"
         request.headers = {"X-Real-IP": "10.0.0.1"}
 
         ip = self.middleware._get_client_ip(request)
 
-        assert ip == "10.0.0.1"
+        assert ip == "192.168.1.1"
 
     def test_get_client_ip_unknown(self):
         """Test getting client IP when client is None"""
@@ -468,7 +468,7 @@ class TestRateLimiterMiddleware:
 
     @patch("app.middleware.rate_limiter.time.time")
     async def test_dispatch_webhook_endpoint_with_proxy_headers(self, mock_time):
-        """Test dispatch with proxy headers"""
+        """Proxy headers must not let one peer spread across buckets"""
         mock_time.return_value = 100
 
         request = Mock()
@@ -480,6 +480,6 @@ class TestRateLimiterMiddleware:
         await self.middleware.dispatch(request, call_next)
 
         call_next.assert_called_once_with(request)
-        # Should use the forwarded IP
-        assert len(self.middleware.requests["10.0.0.1"]) == 1
-        assert "192.168.1.1" not in self.middleware.requests
+        # The TCP peer owns the bucket, not the header it sent
+        assert len(self.middleware.requests["192.168.1.1"]) == 1
+        assert "10.0.0.1" not in self.middleware.requests

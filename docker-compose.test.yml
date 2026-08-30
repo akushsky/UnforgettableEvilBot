@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # PostgreSQL Database for Testing
   postgres-test:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: whatsapp-digest-test-db
     environment:
       - POSTGRES_DB=whatsapp_digest_test

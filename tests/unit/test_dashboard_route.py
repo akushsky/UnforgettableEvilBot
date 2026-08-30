@@ -6,13 +6,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from main import app
 
 
 @pytest.fixture
 def client():
-    """Create TestClient for the main app."""
-    return TestClient(app)
+    """Create TestClient for the main app with admin auth satisfied."""
+    app.dependency_overrides[get_admin_auth_dependency] = lambda: True
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def test_dashboard_requires_authentication():
+    """Test that the dashboard redirects to login without an admin session."""
+    response = TestClient(app, follow_redirects=False).get("/")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
 
 
 def _mock_db_session(mock_db):

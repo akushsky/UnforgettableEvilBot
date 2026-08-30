@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth.webhook_auth import verify_bridge_secret
 from app.core.repository_factory import repository_factory
+from app.core.user_utils import get_user_settings
 from app.core.validators import SecurityValidators
 from app.database.connection import get_db
 from app.dependencies import get_openai_service, get_telegram_service
@@ -12,23 +15,48 @@ from app.models.schemas import WhatsAppConnectionWebhook, WhatsAppMessageWebhook
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/webhook/whatsapp", tags=["whatsapp-webhooks"])
+
+# Stored in place of the body when a message carries no analysable text, so the
+# message is still persisted and counted in digests instead of being dropped.
+EMPTY_CONTENT_PLACEHOLDER = "[media]"
+MAX_CONTENT_LENGTH = 5000
+# Fallback digest threshold when the user's own min_importance_level cannot be
+# read. Matches the UserSettings.min_importance_level column default.
+DEFAULT_DIGEST_IMPORTANCE_FLOOR = 3
+router = APIRouter(
+    prefix="/webhook/whatsapp",
+    tags=["whatsapp-webhooks"],
+    dependencies=[Depends(verify_bridge_secret)],
+)
 
 
 class WhatsAppReconnectionService:
     """Service for WhatsApp connection restoration"""
 
-    async def handle_connection_restored(self, user_id: str, db: Session):
-        """Processing connection restoration"""
+    async def handle_connection_restored(self, user_id: str):
+        """Processing connection restoration.
+
+        Runs after the response is sent, so it opens its own session instead of
+        reusing the request-scoped one, which is already closed by then.
+        """
+        from app.database.connection import get_db_session
+
         try:
-            user = repository_factory.get_user_repository().get_by_id(db, int(user_id))
-            if user and user.telegram_channel_id:
-                telegram_service = get_telegram_service()
-                notification = f"✅ WhatsApp подключение восстановлено для пользователя {user.username}"
-                await telegram_service.send_notification(
-                    user.telegram_channel_id, notification
+            with get_db_session() as db:
+                user = repository_factory.get_user_repository().get_by_id(
+                    db, int(user_id)
                 )
-                logger.info(f"Connection restored notification sent for user {user_id}")
+                if not (user and user.telegram_channel_id):
+                    return
+                telegram_channel_id = user.telegram_channel_id
+                username = user.username
+
+            telegram_service = get_telegram_service()
+            notification = (
+                f"✅ WhatsApp подключение восстановлено для пользователя {username}"
+            )
+            await telegram_service.send_notification(telegram_channel_id, notification)
+            logger.info(f"Connection restored notification sent for user {user_id}")
         except Exception as e:
             logger.error(f"Failed to send reconnection notification: {e}")
 
@@ -40,7 +68,13 @@ def _validate_and_sanitize_message(
     message: WhatsAppMessageWebhook,
 ) -> tuple[str, str, str | None]:
     """Validate and sanitize message input data"""
-    sanitized_content = message.content or ""
+    sanitized_content = (
+        SecurityValidators.sanitize_input(
+            message.content, max_length=MAX_CONTENT_LENGTH
+        )
+        if message.content
+        else ""
+    )
     sanitized_chat_name = (
         SecurityValidators.sanitize_input(message.chatName, max_length=100)
         if message.chatName
@@ -98,19 +132,42 @@ def _validate_monitored_chat(
     return monitored_chat
 
 
-def _check_duplicate_message(message_id: str, db: Session) -> bool:
-    """Check if message has already been processed"""
-    existing_message = (
-        repository_factory.get_whatsapp_message_repository().get_by_message_id(
-            db, message_id
-        )
+def _get_existing_message(message_id: str, db: Session) -> WhatsAppMessage | None:
+    """The already-stored row for this message id, if any."""
+    return repository_factory.get_whatsapp_message_repository().get_by_message_id(
+        db, message_id
     )
 
-    if existing_message:
-        logger.info(f"Message {message_id} already processed")
+
+def _urgent_notifications_enabled(user_id: int, db: Session) -> bool:
+    """Whether the user opted to receive urgent alerts.
+
+    Urgent alerts are opt-out, so an unreadable or missing setting keeps them on.
+    """
+    try:
+        user_settings = get_user_settings(user_id, db)
+    except Exception as e:
+        logger.warning(
+            f"Could not read urgent_notifications for user {user_id}: {e}. "
+            "Assuming enabled."
+        )
         return True
 
-    return False
+    enabled = user_settings.urgent_notifications
+    return True if enabled is None else bool(enabled)
+
+
+def _digest_importance_floor(user_id: int, db: Session) -> int:
+    """Lowest importance the user still wants to see in a digest."""
+    try:
+        user_settings = get_user_settings(user_id, db)
+        return int(user_settings.min_importance_level)
+    except Exception as e:
+        logger.warning(
+            f"Could not read min_importance_level for user {user_id}: {e}. "
+            f"Using default {DEFAULT_DIGEST_IMPORTANCE_FLOOR}."
+        )
+        return DEFAULT_DIGEST_IMPORTANCE_FLOOR
 
 
 def _parse_timestamp(timestamp: str) -> datetime:
@@ -127,26 +184,80 @@ def _parse_timestamp(timestamp: str) -> datetime:
 
 def _save_message(
     message: WhatsAppMessageWebhook,
-    monitored_chat: MonitoredChat,
+    chat_db_id: int,
     sanitized_content: str,
     sanitized_sender: str | None,
     timestamp: datetime,
     db: Session,
-) -> None:
-    """Save the message to the database"""
+) -> bool:
+    """Persist the message with its provisional importance before AI analysis.
+
+    Returns False only when the row is genuinely already there (unique
+    message_id), so the caller can report a skip instead of failing the bridge
+    webhook. Any other IntegrityError is re-raised: the webhook must answer 500
+    so the bridge retries instead of silently dropping the message.
+    """
     whatsapp_message = WhatsAppMessage(
-        chat_id=monitored_chat.id,
+        chat_id=chat_db_id,
         message_id=message.messageId,
         sender=sanitized_sender or "",
-        content=sanitized_content,
+        content=sanitized_content or EMPTY_CONTENT_PLACEHOLDER,
         timestamp=timestamp,
         importance_score=message.importance,
         has_media=message.hasMedia,
         is_processed=False,
+        ai_analyzed=False,
     )
 
     db.add(whatsapp_message)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if _get_existing_message(message.messageId, db) is not None:
+            logger.info(f"Message {message.messageId} already stored - skipping insert")
+            return False
+
+        logger.error(
+            f"IntegrityError storing message {message.messageId} but no existing row "
+            "found - failing the webhook so the bridge retries"
+        )
+        raise
+
+    return True
+
+
+def _duplicate_response(
+    message: WhatsAppMessageWebhook,
+    chat_db_id: int,
+    user_id: int,
+    background_tasks: BackgroundTasks,
+    existing: WhatsAppMessage | None,
+) -> dict[str, str]:
+    """Answer a duplicate delivery, re-queueing analysis if it never happened.
+
+    A row that exists but was never scored means the previous attempt died
+    between the insert and the AI call. Hard-skipping it would leave the
+    message stuck at its provisional importance forever.
+    """
+    if existing is not None and not existing.ai_analyzed:
+        logger.info(
+            f"Message {message.messageId} already stored but not analyzed - "
+            "re-queueing analysis"
+        )
+        background_tasks.add_task(
+            analyze_and_save_message,
+            message,
+            chat_db_id,
+            str(user_id),
+        )
+        return {
+            "status": "requeued",
+            "message": "Message already stored but not analyzed - queued for analysis",
+        }
+
+    logger.info(f"Message {message.messageId} already processed")
+    return {"status": "skipped", "message": "Message already processed"}
 
 
 @router.post("/message")
@@ -161,9 +272,9 @@ async def receive_whatsapp_message(
 
         # Validate and sanitize input data
         (
-            _sanitized_content,
+            sanitized_content,
             sanitized_chat_name,
-            _sanitized_sender,
+            sanitized_sender,
         ) = _validate_and_sanitize_message(message)
 
         # Validate user
@@ -179,22 +290,48 @@ async def receive_whatsapp_message(
         if not monitored_chat:
             return {"status": "skipped", "message": "Chat is not being monitored"}
 
+        chat_db_id = int(monitored_chat.id)
+
         # Check for duplicate message
-        if _check_duplicate_message(message.messageId, db):
-            return {"status": "skipped", "message": "Message already processed"}
+        existing = _get_existing_message(message.messageId, db)
+        if existing is not None:
+            return _duplicate_response(
+                message, chat_db_id, user_id, background_tasks, existing
+            )
 
         # Parse timestamp
-        _parse_timestamp(message.timestamp)
+        timestamp = _parse_timestamp(message.timestamp)
 
-        # Add background task for AI analysis and saving
+        # Persist before analysis so a failing/slow AI call cannot lose the message
+        stored = _save_message(
+            message,
+            chat_db_id,
+            sanitized_content,
+            sanitized_sender,
+            timestamp,
+            db,
+        )
+        if not stored:
+            return _duplicate_response(
+                message,
+                chat_db_id,
+                user_id,
+                background_tasks,
+                _get_existing_message(message.messageId, db),
+            )
+
+        # Enrich the stored row with AI importance after the response is sent
         background_tasks.add_task(
             analyze_and_save_message,
             message,
-            int(monitored_chat.id),
+            chat_db_id,
             str(user_id),
         )
 
-        return {"status": "success", "message": "Message queued for analysis"}
+        return {
+            "status": "success",
+            "message": "Message stored and queued for analysis",
+        }
 
     except HTTPException:
         raise
@@ -230,7 +367,7 @@ async def whatsapp_connected(
 
             # Start connection restoration in the background
             background_tasks.add_task(
-                reconnection_service.handle_connection_restored, connection.userId, db
+                reconnection_service.handle_connection_restored, connection.userId
             )
 
         return {"status": "success", "message": "Connection status updated"}
@@ -312,20 +449,17 @@ async def whatsapp_disconnected(
 async def analyze_and_save_message(
     message: WhatsAppMessageWebhook, chat_db_id: int, user_id: str
 ):
-    """Background task: analyze importance and save the message with safe handling"""
+    """Background task: score the already-persisted message and update it."""
     from app.database.connection import get_db_session
 
     try:
-        if not message.content:
-            logger.warning(f"Message content is empty for message {message.messageId}")
-            return
-
         sanitized_content = SecurityValidators.sanitize_input(
-            message.content, max_length=5000
+            message.content, max_length=MAX_CONTENT_LENGTH
         )
         if not sanitized_content:
-            logger.warning(
-                f"Message content sanitization failed for message {message.messageId}"
+            logger.info(
+                f"Message {message.messageId} has no analysable text - "
+                "keeping provisional importance"
             )
             return
 
@@ -337,26 +471,49 @@ async def analyze_and_save_message(
         )
 
         final_importance = max(message.importance, ai_importance)
-        timestamp = _parse_timestamp(message.timestamp)
 
         with get_db_session() as db:
-            whatsapp_message = WhatsAppMessage(
-                chat_id=chat_db_id,
-                message_id=message.messageId,
-                sender=SecurityValidators.sanitize_input(
-                    message.sender or "", max_length=100
-                ),
-                content=sanitized_content,
-                timestamp=timestamp,
-                importance_score=final_importance,
-                has_media=message.hasMedia,
-                is_processed=False,
-                ai_analyzed=True,
+            stored_message = (
+                repository_factory.get_whatsapp_message_repository().get_by_message_id(
+                    db, message.messageId
+                )
             )
-            db.add(whatsapp_message)
+
+            if stored_message is None:
+                # Should not happen: the webhook persists before queueing this
+                # task. Recover rather than lose the message.
+                logger.warning(
+                    f"Message {message.messageId} missing at analysis time - inserting"
+                )
+                stored_message = WhatsAppMessage(
+                    chat_id=chat_db_id,
+                    message_id=message.messageId,
+                    sender=SecurityValidators.sanitize_input(
+                        message.sender or "", max_length=100
+                    ),
+                    content=sanitized_content,
+                    timestamp=_parse_timestamp(message.timestamp),
+                    has_media=message.hasMedia,
+                    is_processed=False,
+                )
+                db.add(stored_message)
+
+            stored_message.importance_score = final_importance
+            stored_message.ai_analyzed = True
+
+            # Scored below the user's digest threshold: it will never be picked
+            # up by a digest, so close it out instead of leaving it unprocessed
+            # forever, where cleanup also refuses to touch it.
+            importance_floor = _digest_importance_floor(int(user_id), db)
+            if final_importance < importance_floor:
+                logger.info(
+                    f"Message {message.messageId} scored {final_importance} < "
+                    f"{importance_floor} - marking processed (not digest-eligible)"
+                )
+                stored_message.is_processed = True
 
         logger.info(
-            f"Saved message {message.messageId} with importance {final_importance}"
+            f"Analyzed message {message.messageId} with importance {final_importance}"
         )
 
         if final_importance >= 5:
@@ -378,6 +535,13 @@ async def send_urgent_notification(message: WhatsAppMessageWebhook, user_id: str
         with get_db_session() as db:
             user = repository_factory.get_user_repository().get_by_id(db, int(user_id))
             if not (user and user.is_active and user.telegram_channel_id):
+                return
+
+            if not _urgent_notifications_enabled(int(user_id), db):
+                logger.info(
+                    f"Urgent notifications disabled for user {user_id} - "
+                    f"skipping alert for message {message.messageId}"
+                )
                 return
 
             monitored_chat = repository_factory.get_monitored_chat_repository().get_by_user_and_chat_id(

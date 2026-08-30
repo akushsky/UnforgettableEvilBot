@@ -6,14 +6,51 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from main import app
 
 
 @pytest.fixture
 def client():
-    """Create TestClient for monitoring routes."""
+    """Create TestClient for monitoring routes with admin auth satisfied."""
+    app.dependency_overrides[get_admin_auth_dependency] = lambda: True
     with TestClient(app) as test_client:
         yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/metrics", "/monitoring/alerts", "/monitoring/dashboard", "/monitoring/traces"],
+)
+def test_monitoring_routes_require_authentication(path):
+    """Test that monitoring routes redirect to login without an admin session."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.get(path)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/monitoring/alerts/clear",
+        "/monitoring/alerts/clear/some-pattern",
+        "/monitoring/alerts/alert-123/acknowledge",
+    ],
+)
+@patch("app.api.monitoring.clear_all_alerts")
+@patch("app.api.monitoring.alert_manager")
+def test_monitoring_mutations_require_authentication(mock_alert_mgr, mock_clear, path):
+    """State-changing monitoring routes must not run without an admin session."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.post(path)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+    mock_clear.assert_not_called()
+    mock_alert_mgr.acknowledge_alert.assert_not_called()
 
 
 @patch("app.api.monitoring.process_start_time", 0)

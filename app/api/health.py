@@ -105,11 +105,9 @@ async def health_check():
                 ),
             }
 
-            if (
-                memory_hit_ratio < 0.5
-                and not settings.TESTING
-                and settings.USE_OPTIMIZED_REPOSITORIES
-            ):
+            # Hit ratio is only meaningful once a shared Redis cache is attached;
+            # the in-process fallback cache is expected to miss.
+            if memory_hit_ratio < 0.5 and not settings.TESTING and redis_available:
                 errors.append(f"Low cache hit ratio: {memory_hit_ratio}")
 
         except Exception as e:
@@ -343,7 +341,7 @@ async def health_check():
             "telegram_available": external_services.get("telegram", {}).get("status")
             == "healthy",
             "cache_hit_ratio": checks.get("cache", {}).get("memory_hit_ratio", 0),
-            "use_optimized_repositories": settings.USE_OPTIMIZED_REPOSITORIES,
+            "redis_available": checks.get("cache", {}).get("redis_available", False),
         }
 
         new_alerts = check_system_health(system_data) if not settings.TESTING else []

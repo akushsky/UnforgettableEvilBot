@@ -23,6 +23,8 @@ import psutil
 
 from config.settings import settings
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 
 class LocalDevelopmentServer:
     def __init__(self):
@@ -37,6 +39,7 @@ class LocalDevelopmentServer:
     def find_existing_processes(self):
         """Find existing system processes"""
         existing_processes: dict[str, list] = {"bridge": [], "api": [], "postgres": []}
+        api_port = str(settings.PORT)
 
         try:
             for proc in psutil.process_iter(["pid", "name", "cmdline"]):
@@ -49,9 +52,9 @@ class LocalDevelopmentServer:
                     ):
                         existing_processes["bridge"].append(proc)
 
-                    # Check for FastAPI/uvicorn on port 8000
+                    # Check for FastAPI/uvicorn on the configured API port
                     elif "uvicorn" in cmdline and (
-                        "main:app" in cmdline or "8000" in cmdline
+                        "main:app" in cmdline or api_port in cmdline
                     ):
                         existing_processes["api"].append(proc)
 
@@ -187,7 +190,7 @@ class LocalDevelopmentServer:
             self.log("✅ Required application ports are available")
             return True
 
-    def run_command(self, command, name, log_file=None, cwd=None):
+    def run_command(self, command, name, log_file=None, cwd=None, env=None):
         """Run a command and track the process"""
         try:
             # Split command into list for security
@@ -198,6 +201,8 @@ class LocalDevelopmentServer:
             else:
                 cmd_list = command
 
+            process_env = {**os.environ, **env} if env else None
+
             if log_file:
                 with open(log_file, "w") as f:
                     process = subprocess.Popen(
@@ -205,12 +210,14 @@ class LocalDevelopmentServer:
                         stdout=f,
                         stderr=f,
                         cwd=cwd,
+                        env=process_env,
                         preexec_fn=os.setsid if os.name != "nt" else None,
                     )
             else:
                 process = subprocess.Popen(
                     cmd_list,
                     cwd=cwd,
+                    env=process_env,
                     preexec_fn=os.setsid if os.name != "nt" else None,
                 )
             self.processes[name] = process
@@ -320,9 +327,13 @@ class LocalDevelopmentServer:
             self.log("❌ Alembic not found. Make sure it's installed.")
             return False
 
+    def session_path(self) -> Path:
+        """Absolute session path, so the bridge does not resolve it against its own cwd"""
+        return (PROJECT_ROOT / settings.WHATSAPP_SESSION_PATH).resolve()
+
     def setup_directories(self):
         """Create necessary directories"""
-        Path("whatsapp_sessions").mkdir(exist_ok=True)
+        self.session_path().mkdir(parents=True, exist_ok=True)
         Path("logs").mkdir(exist_ok=True)
         self.log("📁 Created necessary directories")
 
@@ -347,12 +358,18 @@ class LocalDevelopmentServer:
 
     def start_bridge(self):
         """Start WhatsApp bridge"""
-        self.log("🌉 Starting WhatsApp Bridge...")
+        session_path = self.session_path()
+        self.log(f"🌉 Starting WhatsApp Bridge (sessions: {session_path})...")
         process = self.run_command(
             ["node", "bridge.js"],
             "bridge",
             "logs/bridge.log",
             cwd=str(Path("whatsapp_bridge")),
+            env={
+                "WHATSAPP_SESSION_PATH": str(session_path),
+                # restore_connections() is called explicitly once the API is up
+                "RESTORE_ON_START": os.environ.get("RESTORE_ON_START", "0"),
+            },
         )
 
         if process:
@@ -549,7 +566,7 @@ def main():
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
-        print("""
+        print(f"""
 🚀 Local Development Server for WhatsApp Digest System
 
 Usage: python start_local.py

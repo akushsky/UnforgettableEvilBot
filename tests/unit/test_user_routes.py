@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.database.connection import get_db
 from main import app
 
@@ -32,15 +33,50 @@ def client(mock_db):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_admin_auth_dependency] = lambda: True
     with TestClient(app, follow_redirects=False) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
 
-@patch("app.api.user_routes.require_admin_auth", return_value=True)
+@pytest.fixture
+def unauthenticated_client(mock_db):
+    """Create TestClient without an admin session."""
+
+    def _override_get_db():
+        try:
+            yield mock_db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = _override_get_db
+    with TestClient(app, follow_redirects=False) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/admin/users"),
+        ("get", "/admin/users/1"),
+        ("post", "/admin/users/create"),
+        ("post", "/admin/users/1/suspend"),
+        ("post", "/admin/users/1/resume"),
+        ("post", "/admin/users/1/telegram/test"),
+    ],
+)
+def test_admin_routes_require_authentication(method, path, unauthenticated_client):
+    """Test that admin user routes redirect to login without a session."""
+    response = getattr(unauthenticated_client, method)(path)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
 @patch("app.api.user_routes.get_telegram_service")
 @patch("app.api.user_routes.repository_factory")
-def test_users_page_returns_html(mock_repo_factory, mock_telegram, mock_auth, client):
+def test_users_page_returns_html(mock_repo_factory, mock_telegram, client):
     """Test GET /admin/users returns HTML user list page."""
     mock_user_repo = Mock()
     mock_user_repo.get_all.return_value = []
@@ -53,9 +89,8 @@ def test_users_page_returns_html(mock_repo_factory, mock_telegram, mock_auth, cl
     mock_user_repo.get_all.assert_called_once()
 
 
-@patch("app.api.user_routes.require_admin_auth", return_value=True)
 @patch("app.api.user_routes.repository_factory")
-def test_create_user_success(mock_repo_factory, mock_auth, client, mock_db):
+def test_create_user_success(mock_repo_factory, client, mock_db):
     """Test POST /admin/users/create creates new user successfully."""
     mock_user_repo = Mock()
     mock_user_repo.get_by_username.return_value = None
@@ -86,11 +121,8 @@ def test_create_user_success(mock_repo_factory, mock_auth, client, mock_db):
     mock_db.commit.assert_called()
 
 
-@patch("app.api.user_routes.require_admin_auth", return_value=True)
 @patch("app.api.user_routes.repository_factory")
-def test_create_user_duplicate_returns_400(
-    mock_repo_factory, mock_auth, client, mock_db
-):
+def test_create_user_duplicate_returns_400(mock_repo_factory, client, mock_db):
     """Test POST /admin/users/create returns 400 when user already exists."""
     mock_user_repo = Mock()
     existing_user = Mock()
@@ -110,9 +142,8 @@ def test_create_user_duplicate_returns_400(
     mock_user_repo.get_by_username.assert_called_once()
 
 
-@patch("app.api.user_routes.require_admin_auth", return_value=True)
 @patch("app.api.user_routes.repository_factory")
-def test_user_detail_page(mock_repo_factory, mock_auth, client):
+def test_user_detail_page(mock_repo_factory, client):
     """Test GET /admin/users/{user_id} returns user detail page."""
     mock_user = Mock()
     mock_user.id = 1
@@ -146,9 +177,8 @@ def test_user_detail_page(mock_repo_factory, mock_auth, client):
     mock_user_repo.get_by_id_or_404.assert_called_once()
 
 
-@patch("app.api.user_routes.require_admin_auth", return_value=True)
 @patch("app.api.user_routes.repository_factory")
-def test_user_detail_not_found_returns_404(mock_repo_factory, mock_auth, client):
+def test_user_detail_not_found_returns_404(mock_repo_factory, client):
     """Test GET /admin/users/{user_id} returns 404 when user not found."""
     mock_user_repo = Mock()
     from fastapi import HTTPException

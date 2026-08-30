@@ -199,13 +199,13 @@ class AlertManager:
             )
         )
 
-        # Rule for low cache hit ratio (only when optimized repositories are enabled)
+        # Rule for low cache hit ratio (only meaningful when Redis backs the cache)
         self.add_rule(
             AlertRule(
                 name="low_cache_hit_ratio",
                 condition=lambda data: (
                     data.get("cache_hit_ratio", 1.0) < 0.5
-                    and data.get("use_optimized_repositories", False)
+                    and data.get("redis_available", False)
                 ),
                 severity=AlertSeverity.WARNING,
                 title="Low Cache Hit Ratio",

@@ -171,6 +171,8 @@ whatsapp_sessions/.wwebjs_cache/
 whatsapp_bridge/sessions/
 whatsapp_bridge/node_modules/
 client_states.json
+client_states.json.*
+*.backup
 
 # Environment variables
 .env.local

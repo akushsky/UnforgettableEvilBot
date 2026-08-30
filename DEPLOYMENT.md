@@ -215,7 +215,7 @@ services:
       - ./whatsapp_sessions:/app/whatsapp_sessions
 
   db:
-    image: postgres:15
+    image: postgres:16
     environment:
       POSTGRES_DB: whatsapp_digest
       POSTGRES_USER: postgres

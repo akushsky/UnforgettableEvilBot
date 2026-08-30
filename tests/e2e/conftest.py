@@ -104,6 +104,12 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
 @pytest.fixture
 def client(db_session) -> Generator[TestClient, None, None]:
     """Create a test client with DB dependency override."""
+    import os
+
+    # Settings may have been constructed before pytest_configure; keep in sync.
+    secret = os.environ.get("BRIDGE_WEBHOOK_SECRET") or "test-bridge-secret"
+    os.environ.setdefault("BRIDGE_WEBHOOK_SECRET", secret)
+    settings.BRIDGE_WEBHOOK_SECRET = secret
 
     def _override_get_db():
         try:
@@ -113,6 +119,7 @@ def client(db_session) -> Generator[TestClient, None, None]:
 
     app.dependency_overrides[get_db] = _override_get_db
     client = TestClient(app, base_url="https://testserver")
+    client.headers["X-Bridge-Secret"] = secret
     yield client
     app.dependency_overrides.clear()
 

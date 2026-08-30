@@ -4,11 +4,17 @@ from typing import Any
 from app.core.base_service import BaseService
 from app.middleware.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from app.middleware.openai_rate_limiter import RateLimitExceeded, openai_rate_limiter
-from app.openai_service.analyzer import MessageAnalyzer
+from app.openai_service.analyzer import UNPARSEABLE_IMPORTANCE, MessageAnalyzer
 from app.openai_service.client import OpenAIClient
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Importance used when the AI never produced a score (rate limit, circuit
+# breaker, transport failure). Callers keep the bridge's provisional score via
+# max(), so an unscored message stays out of the digest instead of defaulting to
+# the digest threshold.
+UNSCORED_IMPORTANCE = UNPARSEABLE_IMPORTANCE
 
 
 class DigestCreationError(Exception):
@@ -79,12 +85,12 @@ class OpenAIService(BaseService):
             self.logger.warning(
                 f"Rate limit exceeded for message importance analysis: {e}"
             )
-            return 3  # Return average value when limit exceeded
+            return UNSCORED_IMPORTANCE
         except (CircuitBreakerOpenError, Exception) as e:
             self.logger.error(
                 f"Error analyzing message importance (with circuit breaker): {e}"
             )
-            return 3  # Return average value on error
+            return UNSCORED_IMPORTANCE
 
     async def create_digest(self, messages: list[dict]) -> str:
         """Create digest using Circuit Breaker and Rate Limiting.

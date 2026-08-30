@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from app.core.base_service import BaseService
@@ -6,6 +7,15 @@ from config.logging_config import get_logger
 from config.settings import settings
 
 logger = get_logger(__name__)
+
+# Reasoning-capable models burn tokens before emitting the answer, so a
+# single-token budget returned empty strings that then parsed as importance 3.
+IMPORTANCE_MAX_TOKENS = 16
+
+# Importance assigned when the model's answer cannot be read. Deliberately below
+# the default digest threshold (3): an unreadable answer is not evidence that the
+# message matters, and defaulting to 3 flooded digests with noise.
+UNPARSEABLE_IMPORTANCE = 1
 
 
 class MessageAnalyzer(BaseService):
@@ -52,31 +62,20 @@ class MessageAnalyzer(BaseService):
 
     def _build_importance_prompt(self, message: str, chat_context: str = "") -> str:
         """Build prompt for importance analysis"""
-        return f"""
-        You are analyzing the importance of a WhatsApp message in Hebrew.
+        return f"""Rate the importance of this WhatsApp message (usually Hebrew)
+from a family/school chat.
 
-        STEP 1: First, translate this Hebrew message to English:
-        "{message}"
+1 - unimportant (casual chat, emojis, greetings, small talk)
+2 - low significance (personal conversation, minor updates)
+3 - medium (useful information, general announcements, not urgent)
+4 - important (school matters, schedule changes, deadlines, kids' activities,
+    dates and times that require attention)
+5 - critically important (urgent problems, emergencies, immediate action needed)
 
-        STEP 2: Based on the translation, evaluate the importance on a scale from 1 to 5:
+Chat context: {chat_context}
+Message: {message}
 
-        1 - unimportant (casual chat, emojis, greetings, general conversation)
-        2 - low significance (personal conversations, non-critical information, minor updates)
-        3 - medium (useful information, but not urgent, general announcements)
-        4 - important (requires attention, school matters, schedule changes, deadlines, class updates)
-        5 - critically important (urgent matters, problems, important notifications, immediate actions needed)
-
-        IMPORTANT CRITERIA for school/family context:
-        - Schedule and timing information (dates, deadlines, appointments, class times) = HIGH IMPORTANCE
-        - School updates and changes (classes, homework, exams, events) = HIGH IMPORTANCE
-        - Children's activities and sports (practice times, games, competitions) = HIGH IMPORTANCE
-        - Family schedule changes and important dates = HIGH IMPORTANCE
-
-        Chat context: {chat_context}
-        Hebrew message: {message}
-
-        Answer only with a number from 1 to 5.
-        """
+Respond with a single digit from 1 to 5 and nothing else."""
 
     _MARKDOWNV2_FORMATTING_INSTRUCTIONS = """
 OUTPUT FORMAT: valid Telegram MarkdownV2.
@@ -159,23 +158,38 @@ parentheses are escaped.
 Переведи только текст, без дополнительных комментариев."""
 
     def _parse_importance(self, response: str) -> int:
-        """Parse importance score from response"""
+        """Parse importance score from response.
+
+        Unparseable answers fall back to UNPARSEABLE_IMPORTANCE rather than the
+        digest threshold, so a broken AI response cannot flood digests.
+        """
+        text = response.strip() if isinstance(response, str) else ""
+
         try:
-            importance = int(response.strip())
-            return max(1, min(5, importance))  # Ensure value is in range 1-5
-        except (ValueError, TypeError):
-            self.logger.warning(f"Failed to parse importance from response: {response}")
-            return 3  # Return average value on error
+            return max(1, min(5, int(text)))  # Ensure value is in range 1-5
+        except ValueError:
+            pass
+
+        # The model occasionally wraps the digit ("Importance: 4", "4."),
+        # so recover the first 1-5 digit before giving up.
+        match = re.search(r"[1-5]", text)
+        if match:
+            return int(match.group())
+
+        self.logger.warning(f"Failed to parse importance from response: {response}")
+        return UNPARSEABLE_IMPORTANCE
 
     async def analyze_importance(self, message: str, chat_context: str = "") -> int:
         """Analyze message importance"""
         if not await self.validate_input(message):
             logger.warning("Invalid input for importance analysis")
-            return 3
+            return UNPARSEABLE_IMPORTANCE
 
         prompt = self._build_importance_prompt(message, chat_context)
         response = await self.client.make_request(
-            prompt, max_tokens=1, temperature=settings.OPENAI_TEMPERATURE
+            prompt,
+            max_tokens=IMPORTANCE_MAX_TOKENS,
+            temperature=settings.OPENAI_TEMPERATURE,
         )
 
         importance = self._parse_importance(response)

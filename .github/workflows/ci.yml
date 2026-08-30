@@ -87,6 +87,7 @@ jobs:
           ADMIN_PASSWORD: "test-admin-password"
           TELEGRAM_BOT_TOKEN: "test-bot-token"
           SECRET_KEY: "test-secret-key"
+          BRIDGE_WEBHOOK_SECRET: "test-bridge-secret"
 
   test-integration:
     name: Integration Tests
@@ -137,6 +138,9 @@ jobs:
           REDIS_URL: "redis://localhost:6379/0"
           OPENAI_API_KEY: "test-key"
           ADMIN_PASSWORD: "test-admin-password"
+          TELEGRAM_BOT_TOKEN: "test-bot-token"
+          SECRET_KEY: "test-secret-key"
+          BRIDGE_WEBHOOK_SECRET: "test-bridge-secret"
 
       - name: Upload coverage report
         if: always()

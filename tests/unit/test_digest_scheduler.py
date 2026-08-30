@@ -125,35 +125,41 @@ class TestDigestScheduler:
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.get_db_session")
-    async def test_send_cleanup_notification_success(
+    async def test_send_cleanup_notification_goes_to_admin_only(
         self, mock_get_db_session, mock_repo_factory
     ):
-        """Test successful cleanup notification"""
+        """Housekeeping stats are operator info - only the admin is notified"""
         mock_db = Mock()
         mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
         mock_user_repo = Mock()
-        mock_users = [Mock(telegram_channel_id="test_channel")]
-        mock_user_repo.get_active_users_with_telegram.return_value = mock_users
+        mock_user_repo.get_by_id.return_value = Mock(
+            telegram_channel_id="admin_channel"
+        )
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
         self.scheduler.telegram_service.send_notification = AsyncMock()
 
         await self.scheduler.send_cleanup_notification(10, 3, 2, 5)
 
+        mock_user_repo.get_active_users_with_telegram.assert_not_called()
         self.scheduler.telegram_service.send_notification.assert_called_once()
+        assert (
+            self.scheduler.telegram_service.send_notification.call_args[0][0]
+            == "admin_channel"
+        )
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.get_db_session")
-    async def test_send_cleanup_notification_no_users(
+    async def test_send_cleanup_notification_no_admin(
         self, mock_get_db_session, mock_repo_factory
     ):
-        """Test cleanup notification with no users"""
+        """Test cleanup notification when the admin user is not configured"""
         mock_db = Mock()
         mock_get_db_session.return_value = _mock_db_cm(mock_db)()
 
         mock_user_repo = Mock()
-        mock_user_repo.get_active_users_with_telegram.return_value = []
+        mock_user_repo.get_by_id.return_value = None
         mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
         self.scheduler.telegram_service.send_notification = AsyncMock()
@@ -364,7 +370,7 @@ class TestDigestScheduler:
             mock_db, mock_user.id
         )
         mock_message_repo.get_important_messages_for_digest.assert_called_once_with(
-            mock_db, mock_chat.id, 24, 3
+            mock_db, mock_chat.id, 3
         )
         self.scheduler.openai_service.create_digest_by_chats.assert_called_once()
         self.scheduler.telegram_service.send_digest.assert_called_once()
@@ -406,7 +412,7 @@ class TestDigestScheduler:
             mock_db, mock_user.id
         )
         mock_message_repo.get_important_messages_for_digest.assert_called_once_with(
-            mock_db, mock_chat.id, 24, 3
+            mock_db, mock_chat.id, 3
         )
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
@@ -433,10 +439,14 @@ class TestDigestScheduler:
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.datetime")
-    async def test_create_and_send_digest_failed_delivery_no_side_effects(
+    async def test_create_and_send_digest_failed_delivery_keeps_messages_pending(
         self, mock_datetime, mock_repo_factory
     ):
-        """When delivery fails, messages must NOT be marked processed and no digest log created"""
+        """Failed delivery keeps messages pending but still logs the attempt
+
+        The digest_log row is what should_create_digest() reads, so writing it
+        makes the retry wait a full interval instead of every 5 minutes.
+        """
         mock_user = Mock(
             username="test_user",
             id=1,
@@ -479,10 +489,18 @@ class TestDigestScheduler:
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=AsyncMock()
+        ) as mock_notify:
+            await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
         mock_message_repo.mark_as_processed.assert_not_called()
-        mock_digest_repo.create.assert_not_called()
+        mock_digest_repo.create.assert_called_once()
+        logged = mock_digest_repo.create.call_args[0][1]
+        assert logged["telegram_sent"] is False
+        assert logged["whatsapp_sent"] is False
+        assert "Telegram API error" in logged["telegram_error"]
+        mock_notify.assert_awaited_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_create_and_send_digest_no_telegram_channel_id(
@@ -525,11 +543,15 @@ class TestDigestScheduler:
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=AsyncMock()
+        ) as mock_notify:
+            await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
         self.scheduler.telegram_service.send_digest.assert_not_called()
         mock_message_repo.mark_as_processed.assert_not_called()
-        mock_digest_repo.create.assert_not_called()
+        mock_digest_repo.create.assert_called_once()
+        mock_notify.assert_awaited_once()
 
     def test_stop_scheduler(self):
         """Test stopping the scheduler"""
@@ -576,3 +598,189 @@ class TestDigestScheduler:
         await self.scheduler.run_data_cleanup()
 
         mock_cleanup_service.run_full_cleanup.assert_called_once()
+
+
+def _digest_repos(mock_repo_factory, phone_numbers=None):
+    """Wire repository_factory so create_and_send_digest finds one chat + message."""
+    mock_chat = Mock(id=1, chat_name="Test Chat", custom_name=None)
+    mock_chat_repo = Mock()
+    mock_chat_repo.get_active_chats_for_user.return_value = [mock_chat]
+    mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
+
+    mock_message_repo = Mock()
+    mock_message_repo.get_important_messages_for_digest.return_value = [
+        Mock(
+            id=7,
+            sender="Sender",
+            content="msg",
+            importance_score=5,
+            timestamp=datetime(2024, 1, 1, 11, 0, 0),
+        )
+    ]
+    mock_repo_factory.get_whatsapp_message_repository.return_value = mock_message_repo
+
+    mock_digest_repo = Mock()
+    mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
+
+    mock_phone_repo = Mock()
+    mock_phone_repo.get_phone_numbers_for_user.return_value = phone_numbers or []
+    mock_repo_factory.get_whatsapp_phone_repository.return_value = mock_phone_repo
+
+    return mock_message_repo, mock_digest_repo
+
+
+def _whatsapp_user():
+    """A user whose digest preference is WhatsApp."""
+    preference = Mock()
+    preference.name = "whatsapp"
+    return Mock(
+        username="test_user",
+        id=1,
+        digest_interval_hours=4,
+        digest_preference=preference,
+        telegram_channel_id=None,
+    )
+
+
+class TestDigestMinImportanceLevel:
+    """The digest threshold comes from the user's settings, not a constant."""
+
+    def setup_method(self):
+        self.scheduler = _make_scheduler()
+
+    @patch("app.scheduler.digest_scheduler.get_user_settings")
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_user_setting_is_used_as_threshold(
+        self, mock_repo_factory, mock_get_user_settings
+    ):
+        mock_get_user_settings.return_value = Mock(min_importance_level=4)
+        message_repo, _ = _digest_repos(mock_repo_factory)
+
+        mock_user = Mock(
+            username="test_user",
+            id=1,
+            digest_interval_hours=4,
+            digest_preference=None,
+            telegram_channel_id="123456",
+        )
+        mock_db = Mock()
+
+        self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
+            return_value="digest"
+        )
+        self.scheduler.telegram_service.send_digest = AsyncMock(return_value=True)
+
+        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+
+        message_repo.get_important_messages_for_digest.assert_called_once_with(
+            mock_db, 1, 4
+        )
+
+    @patch("app.scheduler.digest_scheduler.get_user_settings")
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_threshold_falls_back_to_default_when_settings_unavailable(
+        self, mock_repo_factory, mock_get_user_settings
+    ):
+        mock_get_user_settings.side_effect = Exception("no settings table")
+        message_repo, _ = _digest_repos(mock_repo_factory)
+
+        mock_user = Mock(
+            username="test_user",
+            id=1,
+            digest_interval_hours=4,
+            digest_preference=None,
+            telegram_channel_id="123456",
+        )
+        mock_db = Mock()
+
+        self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
+            return_value="digest"
+        )
+        self.scheduler.telegram_service.send_digest = AsyncMock(return_value=True)
+
+        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+
+        message_repo.get_important_messages_for_digest.assert_called_once_with(
+            mock_db, 1, 3
+        )
+
+
+class TestWhatsAppDigestDelivery:
+    """Multi-phone WhatsApp delivery must be all-or-nothing."""
+
+    def setup_method(self):
+        self.scheduler = _make_scheduler()
+
+    async def _run(self, mock_repo_factory, phones, success_count, error_count):
+        message_repo, digest_repo = _digest_repos(
+            mock_repo_factory, phone_numbers=phones
+        )
+
+        self.scheduler.openai_service.create_digest_by_chats = AsyncMock(
+            return_value="digest"
+        )
+        self.scheduler.whatsapp_official_service.send_digest_to_multiple_phones = (
+            AsyncMock(
+                return_value={
+                    "total_phones": len(phones),
+                    "success_count": success_count,
+                    "error_count": error_count,
+                    "results": [],
+                }
+            )
+        )
+
+        self.notify = AsyncMock()
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=self.notify
+        ):
+            await self.scheduler.create_and_send_digest(_whatsapp_user(), Mock())
+        return message_repo, digest_repo
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_partial_delivery_does_not_mark_messages_processed(
+        self, mock_repo_factory
+    ):
+        message_repo, _ = await self._run(
+            mock_repo_factory, ["+1", "+2", "+3"], success_count=2, error_count=1
+        )
+
+        message_repo.mark_as_processed.assert_not_called()
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_partial_delivery_logs_the_attempt_and_alerts_admin(
+        self, mock_repo_factory
+    ):
+        """The digest_log row gates the retry to one per interval, not per tick"""
+        _, digest_repo = await self._run(
+            mock_repo_factory, ["+1", "+2", "+3"], success_count=2, error_count=1
+        )
+
+        digest_repo.create.assert_called_once()
+        logged = digest_repo.create.call_args[0][1]
+        assert logged["whatsapp_sent"] is False
+        assert "2/3" in logged["whatsapp_error"]
+        self.notify.assert_awaited_once()
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_full_delivery_marks_messages_processed(self, mock_repo_factory):
+        message_repo, digest_repo = await self._run(
+            mock_repo_factory, ["+1", "+2"], success_count=2, error_count=0
+        )
+
+        message_repo.mark_as_processed.assert_called_once()
+        digest_repo.create.assert_called_once()
+        assert digest_repo.create.call_args[0][1]["whatsapp_sent"] is True
+        self.notify.assert_not_awaited()
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_success_count_below_configured_phones_is_not_sent(
+        self, mock_repo_factory
+    ):
+        """A silently shortened result set must not count as a full delivery"""
+        message_repo, digest_repo = await self._run(
+            mock_repo_factory, ["+1", "+2", "+3"], success_count=2, error_count=0
+        )
+
+        message_repo.mark_as_processed.assert_not_called()
+        assert digest_repo.create.call_args[0][1]["whatsapp_sent"] is False

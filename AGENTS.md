@@ -48,7 +48,7 @@ alembic revision --autogenerate -m "description"
 
 | Path | Role |
 |------|------|
-| `main.py` | FastAPI app + lifespan (scheduler, metrics :9090, create_all) |
+| `main.py` | FastAPI app + lifespan (scheduler, metrics :9090) |
 | `docker/start.sh` | Prod entry: wait DB → alembic → bridge → uvicorn → restore-all |
 | `config/settings.py` | All env vars |
 | `app/api/` | Routes: webhooks, admin, health, monitoring, dashboard |
@@ -85,13 +85,9 @@ alembic revision --autogenerate -m "description"
 
 ## Landmines
 
-- **Dual schema init:** `start.sh` runs `alembic upgrade head`; `main.py` lifespan also calls `Base.metadata.create_all` — models and migrations can drift.
-- **Postgres versions:** local `docker-compose.yml` uses Postgres **15**; CI/docs use **16**.
+- **Schema is Alembic-only:** `start.sh` runs `alembic upgrade head`; the app lifespan does **not** create tables. Test fixtures still use `create_all`, so model/migration drift shows up as tests passing while prod is missing a column.
 - **Coolify compose** omits `WHATSAPP_BRIDGE_URL` — default localhost works only because bridge shares the container.
 - **Bridge state mismatch:** stale `client_states.json` vs DB user ids → health OK but chats timeout. There is no `fix_bridge_state.py` in-repo; use `POST http://localhost:3000/cleanup-stale-state` (or clear session dirs carefully).
-- **`USE_OPTIMIZED_REPOSITORIES`:** does **not** select another repository module (file does not exist); only affects health/alert thresholds. Coolify sets `true`, `.env.example` has `false`.
-- **`WHATSAPP_INTEGRATION.md`** may still mention Puppeteer — actual stack is **Baileys**, no Chrome.
 - **Suspended users:** webhook returns **HTTP 200** with suspended detail so the bridge does not retry-storm.
-- **`start_local.py`** looks for uvicorn on port **8000**; default API port is **9876**.
 - Persist **`whatsapp_sessions/`** (and bridge state) across deploys or QR re-pairing is required.
 - No Grafana dashboard for relay/whatsapp in the shared Grafana instance as of agent setup.

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.database.connection import get_db
 from main import app
 
@@ -32,9 +33,30 @@ def client(mock_db):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_admin_auth_dependency] = lambda: True
     with TestClient(app, follow_redirects=False) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+def test_admin_chat_routes_require_authentication():
+    """Test that admin chat routes redirect to login without a session."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.get("/admin/users/1/chats")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_requires_authentication(mock_repo_factory):
+    """Digest generation burns AI budget, so it must not run unauthenticated."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+    mock_repo_factory.get_user_repository.assert_not_called()
 
 
 @patch("app.api.admin_routes.get_whatsapp_service")
@@ -262,19 +284,38 @@ def test_update_whatsapp_status(mock_repo_factory, client):
     assert mock_user.whatsapp_connected is True
 
 
-@patch("app.scheduler.digest_scheduler.DigestScheduler")
-@patch("app.api.admin_routes.repository_factory")
-def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
-    """Test POST /admin/users/{user_id}/digest/generate creates digest."""
+def _digest_candidate(preference_name=None, telegram_channel_id="-100123"):
+    """A user that passes the active/connected checks of the digest endpoint."""
     mock_user = Mock()
     mock_user.id = 1
     mock_user.is_active = True
     mock_user.whatsapp_connected = True
-    mock_user.telegram_channel_id = "-100123"
+    mock_user.telegram_channel_id = telegram_channel_id
+    if preference_name is None:
+        mock_user.digest_preference = None
+    else:
+        preference = Mock()
+        preference.name = preference_name
+        mock_user.digest_preference = preference
+    return mock_user
 
+
+def _wire_digest_user(mock_repo_factory, mock_user, phone_numbers=()):
+    """Point repository_factory at the given user and WhatsApp phone list."""
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = mock_user
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    mock_phone_repo = Mock()
+    mock_phone_repo.get_phone_numbers_for_user.return_value = list(phone_numbers)
+    mock_repo_factory.get_whatsapp_phone_repository.return_value = mock_phone_repo
+
+
+@patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
+    """Test POST /admin/users/{user_id}/digest/generate creates digest."""
+    _wire_digest_user(mock_repo_factory, _digest_candidate())
 
     mock_scheduler = AsyncMock()
     mock_scheduler.create_and_send_digest = AsyncMock()
@@ -285,6 +326,43 @@ def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
+
+
+@patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_allowed_for_whatsapp_only_user(
+    mock_repo_factory, mock_scheduler_cls, client
+):
+    """A WhatsApp-preference user with phones needs no Telegram channel."""
+    _wire_digest_user(
+        mock_repo_factory,
+        _digest_candidate(preference_name="whatsapp", telegram_channel_id=None),
+        phone_numbers=["+972500000000"],
+    )
+
+    mock_scheduler = AsyncMock()
+    mock_scheduler.create_and_send_digest = AsyncMock()
+    mock_scheduler_cls.return_value = mock_scheduler
+
+    response = client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_rejected_without_delivery_channel(mock_repo_factory, client):
+    """No Telegram channel and no WhatsApp phones means nowhere to deliver."""
+    _wire_digest_user(
+        mock_repo_factory,
+        _digest_candidate(preference_name="whatsapp", telegram_channel_id=None),
+        phone_numbers=[],
+    )
+
+    response = client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
 
 
 @patch("app.api.admin_routes.repository_factory")

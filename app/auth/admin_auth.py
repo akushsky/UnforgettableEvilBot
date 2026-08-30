@@ -1,3 +1,6 @@
+import hmac
+import secrets
+
 from fastapi import HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -15,11 +18,11 @@ admin_sessions = set()
 
 
 def create_admin_session(request: Request) -> str:
-    """Create a new admin session"""
-    client_host = request.client.host if request.client else "unknown"
-    session_id = f"admin_{client_host}_{id(request)}"
+    """Create a new admin session with a cryptographically random identifier"""
+    session_id = secrets.token_urlsafe(32)
     admin_sessions.add(session_id)
-    logger.info(f"Admin session created: {session_id}")
+    client_host = request.client.host if request.client else "unknown"
+    logger.info(f"Admin session created for {client_host}")
     return session_id
 
 
@@ -59,7 +62,7 @@ def verify_admin_password(password: str) -> bool:
             "Set a strong ADMIN_PASSWORD environment variable."
         )
         return False
-    return password == admin_password
+    return hmac.compare_digest(password.encode("utf-8"), admin_password.encode("utf-8"))
 
 
 def get_admin_login_page(request: Request) -> HTMLResponse:
@@ -81,7 +84,7 @@ def logout_admin(request: Request) -> Response:
     session_id = request.cookies.get("admin_session")
     if session_id and session_id in admin_sessions:
         admin_sessions.remove(session_id)
-        logger.info(f"Admin session removed: {session_id}")
+        logger.info("Admin session removed")
 
     response = RedirectResponse(url="/admin/login", status_code=303)
     response.delete_cookie("admin_session")
