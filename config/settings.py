@@ -126,6 +126,13 @@ class Settings:
             ("SECRET_KEY", self.SECRET_KEY),
         ]
 
+        # Outside DEBUG the bridge webhooks fail closed without a shared
+        # secret, so a missing value means silent inbound message loss.
+        if not self.DEBUG:
+            required_vars.append(
+                ("BRIDGE_WEBHOOK_SECRET", (self.BRIDGE_WEBHOOK_SECRET or "").strip())
+            )
+
         missing_vars = []
         for var_name, var_value in required_vars:
             if not var_value or var_value == "your-secret-key-here":

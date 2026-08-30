@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -167,8 +167,6 @@ class TestWhatsAppWebhooks:
     @pytest.mark.asyncio
     async def test_get_active_users_database_error(self, mock_repo_factory, mock_db):
         """Test handling of database errors"""
-        from fastapi import HTTPException
-
         # Setup mock repository to raise an exception
         mock_user_repo = Mock()
         mock_user_repo.get_active_users_with_whatsapp.side_effect = Exception(
@@ -484,14 +482,85 @@ class TestMessagePersistedBeforeAnalysis:
             "INSERT INTO whatsapp_messages", {}, Exception("duplicate message_id")
         )
 
-        with patch(
-            "app.api.whatsapp_webhooks.repository_factory", _mock_repositories()
-        ):
+        repo_factory = _mock_repositories()
+        # Not a duplicate on the pre-check, but the racing insert landed first.
+        repo_factory.get_whatsapp_message_repository().get_by_message_id.side_effect = [
+            None,
+            Mock(ai_analyzed=True),
+            Mock(ai_analyzed=True),
+        ]
+
+        with patch("app.api.whatsapp_webhooks.repository_factory", repo_factory):
             response = await receive_whatsapp_message(message, background_tasks, db)
 
         assert response["status"] == "skipped"
         assert db.rollback.called
         assert background_tasks.tasks == []
+
+    @pytest.mark.asyncio
+    async def test_integrity_error_without_duplicate_row_fails_the_webhook(self, db):
+        """A constraint violation that is not a duplicate must return 500
+
+        Swallowing it would tell the bridge the message was handled while
+        nothing was ever stored.
+        """
+        background_tasks = BackgroundTasks()
+        message = _make_webhook_message()
+        db.commit.side_effect = IntegrityError(
+            "INSERT INTO whatsapp_messages", {}, Exception("null value in column")
+        )
+
+        repo_factory = _mock_repositories(existing_message=None)
+
+        with (
+            patch("app.api.whatsapp_webhooks.repository_factory", repo_factory),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await receive_whatsapp_message(message, background_tasks, db)
+
+        assert exc_info.value.status_code == 500
+        assert db.rollback.called
+        assert background_tasks.tasks == []
+
+    @pytest.mark.asyncio
+    async def test_duplicate_never_analyzed_is_requeued(self, db):
+        """A stored-but-unscored duplicate gets its analysis queued again"""
+        background_tasks = BackgroundTasks()
+        message = _make_webhook_message()
+        stored = Mock(ai_analyzed=False)
+        repo_factory = _mock_repositories(existing_message=stored)
+
+        with patch("app.api.whatsapp_webhooks.repository_factory", repo_factory):
+            response = await receive_whatsapp_message(message, background_tasks, db)
+
+        assert response["status"] == "requeued"
+        assert not db.add.called
+        assert len(background_tasks.tasks) == 1
+        task = background_tasks.tasks[0]
+        assert task.func is analyze_and_save_message
+        assert task.args == (message, 42, "1")
+
+    @pytest.mark.asyncio
+    async def test_racing_duplicate_never_analyzed_is_requeued(self, db):
+        """The post-insert duplicate path re-queues analysis too"""
+        background_tasks = BackgroundTasks()
+        message = _make_webhook_message()
+        db.commit.side_effect = IntegrityError(
+            "INSERT INTO whatsapp_messages", {}, Exception("duplicate message_id")
+        )
+
+        repo_factory = _mock_repositories()
+        repo_factory.get_whatsapp_message_repository().get_by_message_id.side_effect = [
+            None,
+            Mock(ai_analyzed=False),
+            Mock(ai_analyzed=False),
+        ]
+
+        with patch("app.api.whatsapp_webhooks.repository_factory", repo_factory):
+            response = await receive_whatsapp_message(message, background_tasks, db)
+
+        assert response["status"] == "requeued"
+        assert len(background_tasks.tasks) == 1
 
     @pytest.mark.asyncio
     async def test_unmonitored_chat_is_not_persisted(self, db):
@@ -654,6 +723,64 @@ class TestAnalyzeAndSaveMessage:
         assert inserted.message_id == "msg-1"
         assert inserted.importance_score == 4
         assert inserted.ai_analyzed is True
+
+    async def _analyze_with_threshold(self, ai_importance, min_importance_level):
+        """Run the analysis task against a user with a given digest threshold."""
+        db = Mock(spec=Session)
+        stored = self._stored_message(importance=1)
+        repo_factory = _mock_repositories(existing_message=stored)
+
+        with (
+            patch("app.api.whatsapp_webhooks.repository_factory", repo_factory),
+            patch(
+                "app.database.connection.get_db_session",
+                lambda: _fake_db_session(db),
+            ),
+            patch(
+                "app.api.whatsapp_webhooks.get_openai_service",
+                return_value=self._openai(ai_importance),
+            ),
+            patch(
+                "app.api.whatsapp_webhooks.get_user_settings",
+                return_value=Mock(min_importance_level=min_importance_level),
+            ),
+        ):
+            await analyze_and_save_message(_make_webhook_message(importance=1), 42, "1")
+
+        return stored
+
+    @pytest.mark.asyncio
+    async def test_below_threshold_message_is_marked_processed(self):
+        """A message that can never reach a digest must not stay unprocessed
+
+        Unprocessed rows are also exempt from cleanup, so they would pile up
+        forever.
+        """
+        stored = await self._analyze_with_threshold(
+            ai_importance=2, min_importance_level=3
+        )
+
+        assert stored.importance_score == 2
+        assert stored.is_processed is True
+
+    @pytest.mark.asyncio
+    async def test_digest_eligible_message_stays_unprocessed(self):
+        """Anything the digest can still pick up must remain pending"""
+        stored = await self._analyze_with_threshold(
+            ai_importance=3, min_importance_level=3
+        )
+
+        assert stored.importance_score == 3
+        assert stored.is_processed is False
+
+    @pytest.mark.asyncio
+    async def test_user_threshold_is_respected_over_the_default(self):
+        """A user who wants low-importance messages still gets them"""
+        stored = await self._analyze_with_threshold(
+            ai_importance=2, min_importance_level=1
+        )
+
+        assert stored.is_processed is False
 
 
 class TestUrgentNotificationSettings:

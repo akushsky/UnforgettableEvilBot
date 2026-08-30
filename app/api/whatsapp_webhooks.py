@@ -20,6 +20,9 @@ logger = get_logger(__name__)
 # message is still persisted and counted in digests instead of being dropped.
 EMPTY_CONTENT_PLACEHOLDER = "[media]"
 MAX_CONTENT_LENGTH = 5000
+# Fallback digest threshold when the user's own min_importance_level cannot be
+# read. Matches the UserSettings.min_importance_level column default.
+DEFAULT_DIGEST_IMPORTANCE_FLOOR = 3
 router = APIRouter(
     prefix="/webhook/whatsapp",
     tags=["whatsapp-webhooks"],
@@ -129,19 +132,11 @@ def _validate_monitored_chat(
     return monitored_chat
 
 
-def _check_duplicate_message(message_id: str, db: Session) -> bool:
-    """Check if message has already been processed"""
-    existing_message = (
-        repository_factory.get_whatsapp_message_repository().get_by_message_id(
-            db, message_id
-        )
+def _get_existing_message(message_id: str, db: Session) -> WhatsAppMessage | None:
+    """The already-stored row for this message id, if any."""
+    return repository_factory.get_whatsapp_message_repository().get_by_message_id(
+        db, message_id
     )
-
-    if existing_message:
-        logger.info(f"Message {message_id} already processed")
-        return True
-
-    return False
 
 
 def _urgent_notifications_enabled(user_id: int, db: Session) -> bool:
@@ -160,6 +155,19 @@ def _urgent_notifications_enabled(user_id: int, db: Session) -> bool:
 
     enabled = user_settings.urgent_notifications
     return True if enabled is None else bool(enabled)
+
+
+def _digest_importance_floor(user_id: int, db: Session) -> int:
+    """Lowest importance the user still wants to see in a digest."""
+    try:
+        user_settings = get_user_settings(user_id, db)
+        return int(user_settings.min_importance_level)
+    except Exception as e:
+        logger.warning(
+            f"Could not read min_importance_level for user {user_id}: {e}. "
+            f"Using default {DEFAULT_DIGEST_IMPORTANCE_FLOOR}."
+        )
+        return DEFAULT_DIGEST_IMPORTANCE_FLOOR
 
 
 def _parse_timestamp(timestamp: str) -> datetime:
@@ -184,8 +192,10 @@ def _save_message(
 ) -> bool:
     """Persist the message with its provisional importance before AI analysis.
 
-    Returns False when the message was already stored (unique message_id), so
-    the caller can report a skip instead of failing the bridge webhook.
+    Returns False only when the row is genuinely already there (unique
+    message_id), so the caller can report a skip instead of failing the bridge
+    webhook. Any other IntegrityError is re-raised: the webhook must answer 500
+    so the bridge retries instead of silently dropping the message.
     """
     whatsapp_message = WhatsAppMessage(
         chat_id=chat_db_id,
@@ -204,10 +214,50 @@ def _save_message(
         db.commit()
     except IntegrityError:
         db.rollback()
-        logger.info(f"Message {message.messageId} already stored - skipping insert")
-        return False
+        if _get_existing_message(message.messageId, db) is not None:
+            logger.info(f"Message {message.messageId} already stored - skipping insert")
+            return False
+
+        logger.error(
+            f"IntegrityError storing message {message.messageId} but no existing row "
+            "found - failing the webhook so the bridge retries"
+        )
+        raise
 
     return True
+
+
+def _duplicate_response(
+    message: WhatsAppMessageWebhook,
+    chat_db_id: int,
+    user_id: int,
+    background_tasks: BackgroundTasks,
+    existing: WhatsAppMessage | None,
+) -> dict[str, str]:
+    """Answer a duplicate delivery, re-queueing analysis if it never happened.
+
+    A row that exists but was never scored means the previous attempt died
+    between the insert and the AI call. Hard-skipping it would leave the
+    message stuck at its provisional importance forever.
+    """
+    if existing is not None and not existing.ai_analyzed:
+        logger.info(
+            f"Message {message.messageId} already stored but not analyzed - "
+            "re-queueing analysis"
+        )
+        background_tasks.add_task(
+            analyze_and_save_message,
+            message,
+            chat_db_id,
+            str(user_id),
+        )
+        return {
+            "status": "requeued",
+            "message": "Message already stored but not analyzed - queued for analysis",
+        }
+
+    logger.info(f"Message {message.messageId} already processed")
+    return {"status": "skipped", "message": "Message already processed"}
 
 
 @router.post("/message")
@@ -240,14 +290,17 @@ async def receive_whatsapp_message(
         if not monitored_chat:
             return {"status": "skipped", "message": "Chat is not being monitored"}
 
+        chat_db_id = int(monitored_chat.id)
+
         # Check for duplicate message
-        if _check_duplicate_message(message.messageId, db):
-            return {"status": "skipped", "message": "Message already processed"}
+        existing = _get_existing_message(message.messageId, db)
+        if existing is not None:
+            return _duplicate_response(
+                message, chat_db_id, user_id, background_tasks, existing
+            )
 
         # Parse timestamp
         timestamp = _parse_timestamp(message.timestamp)
-
-        chat_db_id = int(monitored_chat.id)
 
         # Persist before analysis so a failing/slow AI call cannot lose the message
         stored = _save_message(
@@ -259,7 +312,13 @@ async def receive_whatsapp_message(
             db,
         )
         if not stored:
-            return {"status": "skipped", "message": "Message already processed"}
+            return _duplicate_response(
+                message,
+                chat_db_id,
+                user_id,
+                background_tasks,
+                _get_existing_message(message.messageId, db),
+            )
 
         # Enrich the stored row with AI importance after the response is sent
         background_tasks.add_task(
@@ -441,6 +500,17 @@ async def analyze_and_save_message(
 
             stored_message.importance_score = final_importance
             stored_message.ai_analyzed = True
+
+            # Scored below the user's digest threshold: it will never be picked
+            # up by a digest, so close it out instead of leaving it unprocessed
+            # forever, where cleanup also refuses to touch it.
+            importance_floor = _digest_importance_floor(int(user_id), db)
+            if final_importance < importance_floor:
+                logger.info(
+                    f"Message {message.messageId} scored {final_importance} < "
+                    f"{importance_floor} - marking processed (not digest-eligible)"
+                )
+                stored_message.is_processed = True
 
         logger.info(
             f"Analyzed message {message.messageId} with importance {final_importance}"

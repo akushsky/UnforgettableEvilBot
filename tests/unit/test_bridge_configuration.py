@@ -34,13 +34,17 @@ class MockBridge:
         """
         Mirror of the restore-all decision loop in bridge.js.
 
-        Returns {userId: "restored" | "wiped"}. An empty or missing active user
-        list means "unknown roster" and must never wipe a local session.
+        Returns {userId: "restored" | "disconnected"}. An empty or missing
+        active user list means "unknown roster" and must never touch a local
+        session. Even a known roster only disconnects: the session folder is
+        preserved so an inactive user does not have to re-pair by QR.
         """
         can_wipe = self.has_usable_active_user_list(active_user_ids)
         return {
             user_id: (
-                "wiped" if can_wipe and user_id not in active_user_ids else "restored"
+                "disconnected"
+                if can_wipe and user_id not in active_user_ids
+                else "restored"
             )
             for user_id in local_session_user_ids
         }
@@ -264,13 +268,14 @@ class TestBridgeConfiguration:
 
         assert set(decisions.values()) == {"restored"}
 
-    def test_restore_wipes_only_unknown_users_with_known_roster(self):
-        """With a non-empty roster, only users missing from it are cleaned up"""
+    def test_restore_only_disconnects_unknown_users_with_known_roster(self):
+        """With a non-empty roster, users missing from it are only disconnected"""
         bridge = MockBridge()
 
         decisions = bridge.restore_decisions(["1", "3"], ["1", "2", "3"])
 
-        assert decisions == {"1": "restored", "2": "wiped", "3": "restored"}
+        assert decisions == {"1": "restored", "2": "disconnected", "3": "restored"}
+        assert "wiped" not in decisions.values()
 
     def test_bridge_configuration_consistency(self):
         """Test that bridge configuration is consistent across different scenarios"""
@@ -382,3 +387,69 @@ class TestBridgeSourceInvariants:
             "const hasSession = preferExistingSession ? "
             "await this.checkSessionExists(userId) : false;" not in source
         )
+
+    def test_failed_wipe_aborts_initialization(self):
+        """Reusing stale creds after a failed wipe emits no QR at all"""
+        source = self.source()
+
+        wipe_idx = source.index(
+            "Wiping session for ${userId} - fresh pairing requested"
+        )
+        auth_idx = source.index("useMultiFileAuthState(sessionPath)")
+        between = source[wipe_idx:auth_idx]
+
+        assert "throw new Error(`Session wipe failed for ${userId}" in between
+
+    def test_restore_disconnects_inactive_users_without_deleting_sessions(self):
+        """A user missing from the roster must not be forced to re-pair by QR"""
+        source = self.source()
+
+        branch_idx = source.index("if (canWipe && !activeUserIds.includes(userId)) {")
+        branch = source[branch_idx : source.index("continue;", branch_idx)]
+
+        assert "await this.disconnectUser(userId, 'not_in_active_roster');" in branch
+        assert "cleanupClient" not in branch
+
+    def test_full_session_wipe_stays_on_the_suspension_path(self):
+        """cleanupClient (fs.rm of the session dir) is only for user_suspended"""
+        source = self.source()
+
+        suspend_idx = source.index("if (reason === 'user_suspended') {")
+        assert (
+            "await this.cleanupClient(userId);"
+            in source[suspend_idx : suspend_idx + 300]
+        )
+
+    def test_unforwarded_messages_are_persisted(self):
+        """A message the backend never accepted must not vanish"""
+        source = self.source()
+
+        assert (
+            "const forwarded = await this.postMessageWithRetry(userId, messageData);"
+            in source
+        )
+        assert "await this.recordFailedForward(userId, messageData);" in source
+        assert "path.join(this.sessionsRoot, 'failed_forwards')" in source
+        assert "fssync.mkdirSync(dir, { recursive: true });" in source
+
+    def test_unauthorized_forward_is_fatal(self):
+        """A rejected shared secret must stop forwarding instead of retrying"""
+        source = self.source()
+
+        assert "this.bridgeAuthFailed = false;" in source
+        assert "if (status === 401) {" in source
+        assert "this.bridgeAuthFailed = true;" in source
+        assert "if (this.bridgeAuthFailed) {" in source
+
+    def test_health_reports_unhealthy_after_auth_failure(self):
+        """/health must not claim ok while every message is being dropped"""
+        source = self.source()
+
+        health_idx = source.index("this.app.get('/health'")
+        health = source[
+            health_idx : source.index("this.app.post('/initialize/:userId'")
+        ]
+
+        assert "if (this.bridgeAuthFailed) {" in health
+        assert "res.status(503)" in health
+        assert "status: 'unhealthy'" in health

@@ -22,6 +22,10 @@ from config.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# Upper bound on the messages a single chat can contribute to one digest.
+# Without it a long-unprocessed chat can hand the AI an unbounded prompt.
+DIGEST_MESSAGE_LIMIT = 200
+
 
 class BaseRepository(BaseService):
     """Base repository with common database methods"""
@@ -263,11 +267,13 @@ class WhatsAppMessageRepository(BaseRepository):
         chat_id: int,
         importance_threshold: int = 3,
     ) -> list[WhatsAppMessage]:
-        """Get all unprocessed important messages for a digest.
+        """Get unprocessed important messages for a digest, oldest first.
 
         Deliberately has no time window: a message stays eligible until it is
         actually delivered in a digest, so delays or failed digest runs cannot
-        silently drop messages.
+        silently drop messages. The count is capped at DIGEST_MESSAGE_LIMIT and
+        ordered ascending so a backlog drains oldest-first across runs instead
+        of starving the earliest messages.
         """
         return (
             db.query(WhatsAppMessage)
@@ -276,7 +282,8 @@ class WhatsAppMessageRepository(BaseRepository):
                 WhatsAppMessage.importance_score >= importance_threshold,
                 WhatsAppMessage.is_processed.is_(False),
             )
-            .order_by(desc(WhatsAppMessage.timestamp))
+            .order_by(asc(WhatsAppMessage.timestamp))
+            .limit(DIGEST_MESSAGE_LIMIT)
             .all()
         )
 

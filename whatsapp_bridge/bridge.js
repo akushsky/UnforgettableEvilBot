@@ -65,6 +65,9 @@ class BaileysWhatsAppBridge {
     if (!this.webhookSecret) {
       console.warn('BRIDGE_WEBHOOK_SECRET is not set - backend webhooks will be rejected unless the backend runs in DEBUG mode');
     }
+    // Latched once the backend rejects our secret: retrying cannot fix a
+    // misconfigured shared secret, it only burns messages against a 401.
+    this.bridgeAuthFailed = false;
 
     this.sessionsRoot = path.resolve(process.env.WHATSAPP_SESSION_PATH || './sessions');
     console.log(`Baileys WhatsApp Bridge sessions root: ${this.sessionsRoot}`);
@@ -119,7 +122,20 @@ class BaileysWhatsAppBridge {
           initializing: this.initializing.has(userId),
         };
       }
-      res.json({ status: 'ok', clients: this.clients.size, clientInfo, restoreRunning: !!this.restorePromise });
+      const body = { clients: this.clients.size, clientInfo, restoreRunning: !!this.restorePromise };
+
+      if (this.bridgeAuthFailed) {
+        // Sessions may look fine while every inbound message is being dropped,
+        // so the bridge must not report itself healthy.
+        return res.status(503).json({
+          status: 'unhealthy',
+          error: 'bridge_auth_failed',
+          message: 'Backend rejected X-Bridge-Secret - BRIDGE_WEBHOOK_SECRET is misconfigured; message forwarding is disabled',
+          ...body,
+        });
+      }
+
+      res.json({ status: 'ok', ...body });
     });
 
     this.app.post('/initialize/:userId', async (req, res) => {
@@ -466,7 +482,10 @@ class BaileysWhatsAppBridge {
         try {
           await fs.rm(this.sessionFolderFor(userId), { recursive: true, force: true });
         } catch (e) {
+          // Continuing would hand the stale creds back to useMultiFileAuthState:
+          // no QR is emitted and the caller waits on a pairing that never comes.
           console.error(`[init] session wipe failed for ${userId}:`, e?.message || e);
+          throw new Error(`Session wipe failed for ${userId} - aborting fresh pairing: ${e?.message || e}`);
         }
         this.persistentChats.delete(userId);
         this.qrCodes.delete(userId);
@@ -877,23 +896,61 @@ class BaileysWhatsAppBridge {
       hasMedia: !!(message.message?.imageMessage || message.message?.videoMessage || message.message?.audioMessage || message.message?.documentMessage),
     };
 
-    await this.postMessageWithRetry(userId, messageData);
+    const forwarded = await this.postMessageWithRetry(userId, messageData);
+    if (!forwarded) {
+      await this.recordFailedForward(userId, messageData);
+    }
 
-    // Ensure chat exists in cache
+    // Chat-cache maintenance still runs - it is local bookkeeping and must not
+    // be skipped just because the backend was unreachable - but the message
+    // itself is recorded as lost above rather than treated as delivered.
     try {
       const entry = this.normalizeChat(chatId, { subject: chatName, name: chatName });
       const merged = this.mergeChats(this.persistentChats.get(userId) || [], [entry]);
       this.persistentChats.set(userId, merged);
       await this.savePersistentChats(userId).catch(() => {});
     } catch (_) {}
+
+    return forwarded;
+  }
+
+  failedForwardsDir() {
+    return path.join(this.sessionsRoot, 'failed_forwards');
+  }
+
+  /**
+   * Append a message the backend never accepted to a JSONL file on the session
+   * volume, so it can be inspected and replayed instead of vanishing.
+   */
+  async recordFailedForward(userId, messageData, reason = 'forward_failed') {
+    const dir = this.failedForwardsDir();
+    const file = path.join(dir, `user-${userId}.jsonl`);
+    const record = { recordedAt: new Date().toISOString(), reason, userId, message: messageData };
+
+    try {
+      if (!fssync.existsSync(dir)) fssync.mkdirSync(dir, { recursive: true });
+      await fs.appendFile(file, `${JSON.stringify(record)}\n`);
+      console.error(`!!! MESSAGE NOT FORWARDED for ${userId} (${reason}) - saved to ${file} for replay`);
+    } catch (e) {
+      // Last resort: the payload goes to the log so it is not lost silently.
+      console.error(`!!! MESSAGE NOT FORWARDED for ${userId} (${reason}) AND could not be persisted:`, e?.message || e);
+      console.error(`!!! unforwarded payload: ${JSON.stringify(record)}`);
+    }
   }
 
   /**
    * Forward a message to the backend, retrying transient failures.
    * Retries on 429 / 5xx and on network errors; 4xx other than 429 are final.
+   * HTTP 401 is fatal: the shared secret is wrong, so every later forward is
+   * refused immediately instead of hammering the backend.
    */
   async postMessageWithRetry(userId, messageData, attempts = MESSAGE_POST_ATTEMPTS) {
     const url = `${this.pythonBackendUrl}/webhook/whatsapp/message`;
+
+    if (this.bridgeAuthFailed) {
+      console.error(`refusing to forward msg for ${userId}: backend rejected X-Bridge-Secret - fix BRIDGE_WEBHOOK_SECRET (must match the API) and restart the bridge`);
+      return false;
+    }
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
@@ -904,6 +961,12 @@ class BaileysWhatsAppBridge {
         const status = error?.response?.status;
         const retryable = status === undefined || status === 429 || status >= 500;
         const detail = status ? `HTTP ${status}` : (error?.code || error?.message || 'unknown error');
+
+        if (status === 401) {
+          this.bridgeAuthFailed = true;
+          console.error(`!!! FATAL: backend rejected X-Bridge-Secret for ${userId} (HTTP 401). BRIDGE_WEBHOOK_SECRET is missing or does not match the API secret. Message forwarding is now disabled and /health reports unhealthy.`);
+          return false;
+        }
 
         if (!retryable || attempt === attempts) {
           console.error(`forward msg failed ${userId} (${detail}) after ${attempt} attempt(s)`);
@@ -1347,14 +1410,19 @@ class BaileysWhatsAppBridge {
           const has = await this.checkSessionExists(userId);
           if (!has) continue;
 
-          // Skip suspended users (only when we actually know who is active)
+          // Skip users missing from the roster (only when we actually know who
+          // is active). Disconnect and skip the restore, but never delete the
+          // session folder: a user absent from one roster read may simply be
+          // temporarily suspended, and wiping here forces a QR re-pair. Full
+          // session removal stays reserved for the explicit 'user_suspended'
+          // disconnect path.
           if (canWipe && !activeUserIds.includes(userId)) {
-            console.log(`Skipping suspended user ${userId} - disconnecting if connected`);
+            console.log(`Skipping user ${userId} - not in active roster; disconnecting, session preserved`);
             try {
-              await this.cleanupClient(userId);
-              results.push({ userId, status: 'skipped_suspended', message: 'User is suspended' });
+              await this.disconnectUser(userId, 'not_in_active_roster');
+              results.push({ userId, status: 'skipped_suspended', message: 'User is not active - session preserved' });
             } catch (error) {
-              console.error(`Failed to cleanup suspended user ${userId}:`, error);
+              console.error(`Failed to disconnect inactive user ${userId}:`, error);
               results.push({ userId, status: 'error', error: error.message });
             }
             continue;

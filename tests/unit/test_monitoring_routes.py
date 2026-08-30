@@ -32,6 +32,27 @@ def test_monitoring_routes_require_authentication(path):
     assert response.headers["location"] == "/admin/login"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/monitoring/alerts/clear",
+        "/monitoring/alerts/clear/some-pattern",
+        "/monitoring/alerts/alert-123/acknowledge",
+    ],
+)
+@patch("app.api.monitoring.clear_all_alerts")
+@patch("app.api.monitoring.alert_manager")
+def test_monitoring_mutations_require_authentication(mock_alert_mgr, mock_clear, path):
+    """State-changing monitoring routes must not run without an admin session."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.post(path)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+    mock_clear.assert_not_called()
+    mock_alert_mgr.acknowledge_alert.assert_not_called()
+
+
 @patch("app.api.monitoring.process_start_time", 0)
 @patch("app.core.resource_savings.resource_savings_service")
 @patch("app.api.monitoring.psutil")

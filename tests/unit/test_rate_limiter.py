@@ -108,21 +108,48 @@ class TestRateLimiter:
         await self.rate_limiter.dispatch(non_webhook_request, mock_call_next)
         assert mock_call_next.called
 
-    def test_get_client_ip_from_forwarded_for(self):
-        """Test getting client IP from X-Forwarded-For header."""
+    def test_get_client_ip_ignores_forwarded_for(self):
+        """X-Forwarded-For is caller controlled and must not key the bucket."""
         request = _make_request(
-            host="127.0.0.1", headers={"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
+            host=EXTERNAL_IP, headers={"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
         )
 
         ip = self.rate_limiter._get_client_ip(request)
-        assert ip == "192.168.1.1"
+        assert ip == EXTERNAL_IP
 
-    def test_get_client_ip_from_real_ip(self):
-        """Test getting client IP from X-Real-IP header."""
-        request = _make_request(host="127.0.0.1", headers={"X-Real-IP": "192.168.1.1"})
+    def test_get_client_ip_ignores_real_ip(self):
+        """X-Real-IP is caller controlled and must not key the bucket."""
+        request = _make_request(host=EXTERNAL_IP, headers={"X-Real-IP": "192.168.1.1"})
 
         ip = self.rate_limiter._get_client_ip(request)
-        assert ip == "192.168.1.1"
+        assert ip == EXTERNAL_IP
+
+    def test_get_client_ip_falls_back_when_peer_is_unknown(self):
+        """A request without a TCP peer still lands in a single bucket."""
+        request = _make_request()
+        request.client = None
+
+        assert self.rate_limiter._get_client_ip(request) == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_rotating_forwarded_for_cannot_escape_the_limit(self):
+        """One peer forging a new X-Forwarded-For per request stays in one bucket."""
+        mock_call_next = AsyncMock()
+
+        for i in range(60):
+            await self.rate_limiter.dispatch(
+                _make_request(headers={"X-Forwarded-For": f"10.0.0.{i}"}),
+                mock_call_next,
+            )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self.rate_limiter.dispatch(
+                _make_request(headers={"X-Forwarded-For": "10.0.1.1"}),
+                mock_call_next,
+            )
+
+        assert exc_info.value.status_code == 429
+        assert len(self.rate_limiter.requests[EXTERNAL_IP]) == 60
 
 
 class TestRateLimiterExemptions:

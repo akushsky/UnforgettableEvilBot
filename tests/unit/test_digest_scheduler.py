@@ -439,10 +439,14 @@ class TestDigestScheduler:
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     @patch("app.scheduler.digest_scheduler.datetime")
-    async def test_create_and_send_digest_failed_delivery_no_side_effects(
+    async def test_create_and_send_digest_failed_delivery_keeps_messages_pending(
         self, mock_datetime, mock_repo_factory
     ):
-        """When delivery fails, messages must NOT be marked processed and no digest log created"""
+        """Failed delivery keeps messages pending but still logs the attempt
+
+        The digest_log row is what should_create_digest() reads, so writing it
+        makes the retry wait a full interval instead of every 5 minutes.
+        """
         mock_user = Mock(
             username="test_user",
             id=1,
@@ -485,10 +489,18 @@ class TestDigestScheduler:
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=AsyncMock()
+        ) as mock_notify:
+            await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
         mock_message_repo.mark_as_processed.assert_not_called()
-        mock_digest_repo.create.assert_not_called()
+        mock_digest_repo.create.assert_called_once()
+        logged = mock_digest_repo.create.call_args[0][1]
+        assert logged["telegram_sent"] is False
+        assert logged["whatsapp_sent"] is False
+        assert "Telegram API error" in logged["telegram_error"]
+        mock_notify.assert_awaited_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_create_and_send_digest_no_telegram_channel_id(
@@ -531,11 +543,15 @@ class TestDigestScheduler:
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=AsyncMock()
+        ) as mock_notify:
+            await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
         self.scheduler.telegram_service.send_digest.assert_not_called()
         mock_message_repo.mark_as_processed.assert_not_called()
-        mock_digest_repo.create.assert_not_called()
+        mock_digest_repo.create.assert_called_once()
+        mock_notify.assert_awaited_once()
 
     def test_stop_scheduler(self):
         """Test stopping the scheduler"""
@@ -714,19 +730,37 @@ class TestWhatsAppDigestDelivery:
             )
         )
 
-        await self.scheduler.create_and_send_digest(_whatsapp_user(), Mock())
+        self.notify = AsyncMock()
+        with patch.object(
+            self.scheduler, "_notify_admin_delivery_failure", new=self.notify
+        ):
+            await self.scheduler.create_and_send_digest(_whatsapp_user(), Mock())
         return message_repo, digest_repo
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_partial_delivery_does_not_mark_messages_processed(
         self, mock_repo_factory
     ):
-        message_repo, digest_repo = await self._run(
+        message_repo, _ = await self._run(
             mock_repo_factory, ["+1", "+2", "+3"], success_count=2, error_count=1
         )
 
         message_repo.mark_as_processed.assert_not_called()
-        digest_repo.create.assert_not_called()
+
+    @patch("app.scheduler.digest_scheduler.repository_factory")
+    async def test_partial_delivery_logs_the_attempt_and_alerts_admin(
+        self, mock_repo_factory
+    ):
+        """The digest_log row gates the retry to one per interval, not per tick"""
+        _, digest_repo = await self._run(
+            mock_repo_factory, ["+1", "+2", "+3"], success_count=2, error_count=1
+        )
+
+        digest_repo.create.assert_called_once()
+        logged = digest_repo.create.call_args[0][1]
+        assert logged["whatsapp_sent"] is False
+        assert "2/3" in logged["whatsapp_error"]
+        self.notify.assert_awaited_once()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_full_delivery_marks_messages_processed(self, mock_repo_factory):
@@ -737,6 +771,7 @@ class TestWhatsAppDigestDelivery:
         message_repo.mark_as_processed.assert_called_once()
         digest_repo.create.assert_called_once()
         assert digest_repo.create.call_args[0][1]["whatsapp_sent"] is True
+        self.notify.assert_not_awaited()
 
     @patch("app.scheduler.digest_scheduler.repository_factory")
     async def test_success_count_below_configured_phones_is_not_sent(
@@ -748,4 +783,4 @@ class TestWhatsAppDigestDelivery:
         )
 
         message_repo.mark_as_processed.assert_not_called()
-        digest_repo.create.assert_not_called()
+        assert digest_repo.create.call_args[0][1]["whatsapp_sent"] is False

@@ -234,7 +234,7 @@ class TestWhatsAppMessageRepository:
         chat_id = 1
         importance_threshold = 3
         mock_messages = [Mock(spec=WhatsAppMessage), Mock(spec=WhatsAppMessage)]
-        self.mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+        self.mock_db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = (
             mock_messages
         )
 
@@ -249,7 +249,7 @@ class TestWhatsAppMessageRepository:
     def test_get_important_messages_for_digest_has_no_time_window(self):
         """Unprocessed important messages stay eligible regardless of age"""
         # Arrange
-        self.mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+        self.mock_db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = (
             []
         )
 
@@ -263,6 +263,38 @@ class TestWhatsAppMessageRepository:
         assert not any("timestamp" in c for c in criteria), criteria
         assert any("is_processed IS false" in c for c in criteria), criteria
         assert any("importance_score >=" in c for c in criteria), criteria
+
+    def test_get_important_messages_for_digest_is_capped(self):
+        """An unbounded backlog must not be handed to the AI in one prompt"""
+        # Arrange
+        from app.core.repositories import DIGEST_MESSAGE_LIMIT
+
+        query = (
+            self.mock_db.query.return_value.filter.return_value.order_by.return_value
+        )
+        query.limit.return_value.all.return_value = []
+
+        # Act
+        self.repository.get_important_messages_for_digest(self.mock_db, 1)
+
+        # Assert
+        query.limit.assert_called_once_with(DIGEST_MESSAGE_LIMIT)
+        assert DIGEST_MESSAGE_LIMIT == 200
+
+    def test_get_important_messages_for_digest_is_oldest_first(self):
+        """Draining oldest-first keeps a capped backlog from starving"""
+        # Arrange
+        self.mock_db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = (
+            []
+        )
+
+        # Act
+        self.repository.get_important_messages_for_digest(self.mock_db, 1)
+
+        # Assert
+        order_by = self.mock_db.query.return_value.filter.return_value.order_by
+        ordering = str(order_by.call_args.args[0])
+        assert "timestamp ASC" in ordering, ordering
 
     def test_get_messages_count(self):
         """Test get_messages_count method"""

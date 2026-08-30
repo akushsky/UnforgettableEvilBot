@@ -106,15 +106,13 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         return bool(peer_host) and peer_host in LOOPBACK_ADDRESSES
 
     def _get_client_ip(self, request: Request) -> str:
-        """Get client IP considering proxy headers"""
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
+        """Bucket key for the limiter: the TCP peer, never proxy headers.
 
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
-
+        X-Forwarded-For / X-Real-IP are caller controlled, so keying buckets on
+        them lets a single client mint a fresh bucket per request and bypass
+        the limit entirely. Behind a real proxy this collapses all callers into
+        the proxy's bucket, which throttles too much rather than too little.
+        """
         return (
             request.client.host if request.client and request.client.host else "unknown"
         )

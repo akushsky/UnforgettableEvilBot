@@ -335,6 +335,10 @@ class DigestScheduler:
                             # Partial delivery must not count as sent: marking
                             # the messages processed here would silently drop
                             # them for the phones that never received them.
+                            # The failure branch below still writes a
+                            # digest_log row, so the phones that did fail get
+                            # another attempt after the user's digest interval
+                            # rather than every 5 minutes.
                             whatsapp_sent = error_count == 0 and success_count == len(
                                 phone_numbers
                             )
@@ -375,19 +379,20 @@ class DigestScheduler:
                             f"Failed to send fallback Telegram digest to user {user.username}: {e}"
                         )
 
+            digest_log_data = {
+                "user_id": user.id,
+                "digest_content": digest_content,
+                "message_count": total_important_messages,
+                "telegram_sent": telegram_sent,
+                "telegram_error": telegram_error,
+                "whatsapp_sent": whatsapp_sent,
+                "whatsapp_error": whatsapp_error,
+            }
+
             if telegram_sent or whatsapp_sent:
                 repository_factory.get_whatsapp_message_repository().mark_as_processed(
                     db, processed_message_ids
                 )
-                digest_log_data = {
-                    "user_id": user.id,
-                    "digest_content": digest_content,
-                    "message_count": total_important_messages,
-                    "telegram_sent": telegram_sent,
-                    "telegram_error": telegram_error,
-                    "whatsapp_sent": whatsapp_sent,
-                    "whatsapp_error": whatsapp_error,
-                }
                 repository_factory.get_digest_log_repository().create(
                     db, digest_log_data
                 )
@@ -399,7 +404,23 @@ class DigestScheduler:
                 logger.error(
                     f"Digest delivery failed for user {user.username}. "
                     f"Telegram error: {telegram_error}, WhatsApp error: {whatsapp_error}. "
-                    f"Will retry next cycle."
+                    f"{total_important_messages} messages preserved for the next cycle."
+                )
+                # The messages stay unprocessed so the next successful digest
+                # still carries them, but the failed attempt is logged anyway:
+                # should_create_digest() keys off the last digest_log row, so
+                # without it every 5-minute tick would regenerate and re-attempt
+                # delivery. With it, the retry (including the phone numbers that
+                # failed in a partial WhatsApp delivery) waits a full interval
+                # instead of spamming both the AI and the recipients.
+                repository_factory.get_digest_log_repository().create(
+                    db, digest_log_data
+                )
+                await self._notify_admin_delivery_failure(
+                    user,
+                    telegram_error,
+                    whatsapp_error,
+                    total_important_messages,
                 )
 
         except Exception as e:
@@ -444,6 +465,43 @@ class DigestScheduler:
         except Exception as notify_err:
             logger.error(
                 f"Failed to send admin notification about digest failure: {notify_err}"
+            )
+
+    async def _notify_admin_delivery_failure(
+        self,
+        user: User,
+        telegram_error: str | None,
+        whatsapp_error: str | None,
+        message_count: int,
+    ):
+        """Notify admin when a generated digest could not be delivered.
+
+        Covers both a total failure and a partial WhatsApp fan-out, since the
+        latter is treated as undelivered: the messages are kept for the retry.
+        """
+        try:
+            message = (
+                f"⚠️ **Дайджест не доставлен**\n\n"
+                f"👤 Пользователь: {user.username}\n"
+                f"📩 Сообщений ожидает: {message_count}\n"
+                f"✈️ Telegram: {telegram_error or 'не использовался'}\n"
+                f"📱 WhatsApp: {whatsapp_error or 'не использовался'}\n\n"
+                f"⏰ {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+                f"💡 Сообщения сохранены и войдут в следующий дайджест."
+            )
+
+            with get_db_session() as db:
+                admin_user = repository_factory.get_user_repository().get_by_id(
+                    db, settings.ADMIN_USER_ID
+                )
+                if admin_user and admin_user.telegram_channel_id:
+                    await self.telegram_service.send_notification(
+                        admin_user.telegram_channel_id, message
+                    )
+        except Exception as notify_err:
+            logger.error(
+                f"Failed to send admin notification about delivery failure: "
+                f"{notify_err}"
             )
 
     def stop_scheduler(self):

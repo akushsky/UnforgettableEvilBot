@@ -48,6 +48,17 @@ def test_admin_chat_routes_require_authentication():
     assert response.headers["location"] == "/admin/login"
 
 
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_requires_authentication(mock_repo_factory):
+    """Digest generation burns AI budget, so it must not run unauthenticated."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+    mock_repo_factory.get_user_repository.assert_not_called()
+
+
 @patch("app.api.admin_routes.get_whatsapp_service")
 @patch("app.api.admin_routes.repository_factory")
 def test_get_available_chats_success(mock_repo_factory, mock_whatsapp, client):
