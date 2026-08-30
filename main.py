@@ -32,7 +32,6 @@ from app.core.metrics import metrics_collector
 from app.core.tracing import set_trace_context
 from app.database.connection import get_engine, optimize_database
 from app.middleware.rate_limiter import RateLimiterMiddleware
-from app.models.database import Base
 from app.scheduler.digest_scheduler import DigestScheduler
 from config.logging_config import get_logger, request_context_filter, setup_logging
 from config.settings import settings
@@ -54,9 +53,7 @@ async def lifespan(app: FastAPI):
 
         settings.validate_required_settings()
 
-        logger.info("Creating database tables...")
-        Base.metadata.create_all(bind=get_engine())
-
+        # Schema is owned by Alembic (see docker/start.sh); never auto-create here.
         logger.info("Optimizing database...")
         optimize_database()
 
@@ -109,8 +106,8 @@ app = FastAPI(
     title="WhatsApp Digest System",
     description="Intelligent WhatsApp chat monitoring system using AI for analysis and creating digests of important messages.",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 

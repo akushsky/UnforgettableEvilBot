@@ -21,14 +21,12 @@ class TestMessageAnalyzer:
         chat_context = "Test context"
         prompt = self.analyzer._build_importance_prompt(message, chat_context)
 
-        assert (
-            "You are analyzing the importance of a WhatsApp message in Hebrew" in prompt
-        )
-        assert "STEP 1: First, translate this Hebrew message to English" in prompt
-        assert "STEP 2: Based on the translation, evaluate the importance" in prompt
+        assert "Rate the importance of this WhatsApp message" in prompt
+        assert "1 - unimportant" in prompt
+        assert "5 - critically important" in prompt
         assert message in prompt
         assert chat_context in prompt
-        assert "Answer only with a number from 1 to 5" in prompt
+        assert "Respond with a single digit from 1 to 5 and nothing else." in prompt
 
     def test_build_digest_prompt(self):
         """Test digest prompt building"""
@@ -78,11 +76,26 @@ class TestMessageAnalyzer:
         assert self.analyzer._parse_importance("5") == 5
 
     def test_parse_importance_invalid(self):
-        """Test parsing invalid importance scores"""
-        assert self.analyzer._parse_importance("invalid") == 3
-        assert self.analyzer._parse_importance("") == 3
+        """Unreadable answers fall back below the digest threshold, not to 3"""
+        assert self.analyzer._parse_importance("invalid") == 1
+        assert self.analyzer._parse_importance("") == 1
+        assert self.analyzer._parse_importance(None) == 1
         assert self.analyzer._parse_importance("0") == 1  # Clamped to minimum
         assert self.analyzer._parse_importance("10") == 5  # Clamped to maximum
+
+    def test_parse_importance_recovers_digit_from_prose(self):
+        """A digit wrapped in text is recovered instead of scored as a failure"""
+        assert self.analyzer._parse_importance("Importance: 4") == 4
+        assert self.analyzer._parse_importance("4.") == 4
+        assert self.analyzer._parse_importance(" 5 \n") == 5
+
+    def test_importance_prompt_asks_for_single_digit(self):
+        """The prompt must request a bare digit so a small token budget suffices"""
+        prompt = self.analyzer._build_importance_prompt("שלום", "Чат: Школа")
+
+        assert "single digit from 1 to 5" in prompt
+        assert "שלום" in prompt
+        assert "Чат: Школа" in prompt
 
     @patch.object(MessageAnalyzer, "validate_input")
     async def test_analyze_importance_success(self, mock_validate):
@@ -97,13 +110,23 @@ class TestMessageAnalyzer:
         mock_validate.assert_called_once_with("Test message")
 
     @patch.object(MessageAnalyzer, "validate_input")
+    async def test_analyze_importance_uses_multi_token_budget(self, mock_validate):
+        """A one-token budget returned empty answers that parsed as importance 3"""
+        mock_validate.return_value = True
+        self.mock_client.make_request = AsyncMock(return_value="4")
+
+        await self.analyzer.analyze_importance("Test message")
+
+        assert self.mock_client.make_request.call_args.kwargs["max_tokens"] >= 16
+
+    @patch.object(MessageAnalyzer, "validate_input")
     async def test_analyze_importance_invalid_input(self, mock_validate):
         """Test importance analysis with invalid input"""
         mock_validate.return_value = False
 
         result = await self.analyzer.analyze_importance("", "Test context")
 
-        assert result == 3
+        assert result == 1
         self.mock_client.make_request.assert_not_called()
 
     @patch.object(MessageAnalyzer, "validate_input")
@@ -245,34 +268,34 @@ class TestOpenAIService:
         self.service.circuit_breaker.call.assert_called_once()
 
     async def test_analyze_message_importance_rate_limit_exceeded(self):
-        """Test message importance analysis with rate limit exceeded"""
+        """A throttled call must not score the message at the digest threshold"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=RateLimitExceeded("Rate limit")
         )
 
         result = await self.service.analyze_message_importance("Test message")
 
-        assert result == 3  # Default value
+        assert result == 1
 
     async def test_analyze_message_importance_circuit_breaker_open(self):
-        """Test message importance analysis with circuit breaker open"""
+        """An open circuit breaker must not score the message at the threshold"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=CircuitBreakerOpenError("Circuit open")
         )
 
         result = await self.service.analyze_message_importance("Test message")
 
-        assert result == 3  # Default value
+        assert result == 1
 
     async def test_analyze_message_importance_general_exception(self):
-        """Test message importance analysis with general exception"""
+        """A failed analysis must not score the message at the digest threshold"""
         self.service.circuit_breaker.call = AsyncMock(
             side_effect=Exception("General error")
         )
 
         result = await self.service.analyze_message_importance("Test message")
 
-        assert result == 3  # Default value
+        assert result == 1
 
     @patch.object(OpenAIService, "_retry_with_backoff")
     @patch.object(OpenAIService, "_with_rate_limiting")

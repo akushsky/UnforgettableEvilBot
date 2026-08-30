@@ -29,28 +29,31 @@ Result: Bridge tries to restore client 3, but backend only knows about user 1
 ## Solutions
 
 ### 1. Immediate Fix (Manual)
-Run the bridge state cleanup script:
+Ask the bridge to reconcile its persisted state against the backend:
 ```bash
-python fix_bridge_state.py
+curl -X POST http://localhost:3000/cleanup-stale-state
 ```
 
-This script will:
-- Clear stale client states from `client_states.json`
-- Remove stale session directories
-- Clear bridge cache
-- Create a backup of the original state
+This will:
+- Fetch the active (non-suspended) user ids from the backend
+- Drop client states in `client_states.json` that no active user owns
+- Remove the corresponding stale session directories
 
-### 2. Automatic Prevention (Code Changes)
-The bridge code has been updated to automatically detect and clean up stale state during restoration:
+If the backend is unreachable the bridge refuses to wipe anything, so make sure
+the API is up first (`curl http://localhost:9876/health`).
 
-- **New function**: `validateAndCleanupPersistedState()` - validates persisted state against active users
-- **New endpoint**: `POST /cleanup-stale-state` - manual cleanup trigger
-- **Enhanced restoration**: Automatic cleanup during `restoreAllClients()`
+### 2. Automatic Prevention
+The bridge validates its persisted state during restoration, so a normal restart
+is usually enough:
 
-### 3. Testing the Fix
-Run the test script to verify the fix:
+- `validateAndCleanupPersistedState()` - validates persisted state against active users
+- `POST /cleanup-stale-state` - manual cleanup trigger
+- `restoreAllClients()` - runs the same validation before re-opening sockets
+
+### 3. Verifying the Fix
 ```bash
-python test_bridge_fix.py
+curl http://localhost:3000/health    # client ids should match active users
+curl http://localhost:3000/chats/1   # should return chats, not a timeout
 ```
 
 ## Prevention Strategies
@@ -100,9 +103,10 @@ curl http://localhost:3000/chats/1
 ## File Locations
 
 ### Bridge State Files
-- **Client states**: `whatsapp_bridge/client_states.json`
-- **Session directories**: `whatsapp_sessions/session-{user_id}/`
-- **Bridge cache**: `whatsapp_bridge/.wwebjs_cache/`
+- **Client states**: `${WHATSAPP_SESSION_PATH}/client_states.json` (i.e. `whatsapp_sessions/client_states.json`)
+- **Baileys credentials**: `whatsapp_sessions/session-{user_id}/` (written by `useMultiFileAuthState`)
+
+Baileys keeps no browser cache — there is no `.wwebjs_cache/` to clear.
 
 ### Log Files
 - **Bridge logs**: `logs/bridge.log`
@@ -111,11 +115,11 @@ curl http://localhost:3000/chats/1
 
 ## Recovery Steps
 
-1. **Stop the bridge** (if running)
-2. **Run cleanup script**: `python fix_bridge_state.py`
-3. **Restart the bridge**
-4. **Test connectivity**: `python test_bridge_fix.py`
-5. **Monitor logs** for successful restoration
+1. **Make sure the backend is up**: `curl http://localhost:9876/health`
+2. **Clean up stale state**: `curl -X POST http://localhost:3000/cleanup-stale-state`
+3. **Re-restore**: `curl -X POST http://localhost:3000/restore-all`
+4. **Test connectivity**: `curl http://localhost:3000/chats/{user_id}`
+5. **Monitor logs** (`logs/bridge.log`) for successful restoration
 
 ## Common Issues
 
@@ -125,8 +129,10 @@ curl http://localhost:3000/chats/1
 ### Issue: Users need to re-authenticate
 **Solution**: This is expected after clearing stale sessions. Users will need to scan QR codes again.
 
-### Issue: Cleanup script fails
-**Solution**: Check file permissions and ensure bridge is stopped before running cleanup.
+### Issue: `/cleanup-stale-state` reports it cleaned nothing
+**Solution**: The bridge only removes state for user ids the backend does not
+list as active. If the backend is unreachable or returns an empty user list, the
+bridge deliberately keeps everything. Fix backend connectivity and retry.
 
 ## Future Improvements
 

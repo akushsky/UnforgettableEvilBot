@@ -261,16 +261,18 @@ class WhatsAppMessageRepository(BaseRepository):
         self,
         db: Session,
         chat_id: int,
-        hours_back: int = 24,
         importance_threshold: int = 3,
     ) -> list[WhatsAppMessage]:
-        """Get important messages for a digest over the last N hours"""
-        cutoff_time = datetime.now(UTC) - timedelta(hours=hours_back)
+        """Get all unprocessed important messages for a digest.
+
+        Deliberately has no time window: a message stays eligible until it is
+        actually delivered in a digest, so delays or failed digest runs cannot
+        silently drop messages.
+        """
         return (
             db.query(WhatsAppMessage)
             .filter(
                 WhatsAppMessage.chat_id == chat_id,
-                WhatsAppMessage.timestamp >= cutoff_time,
                 WhatsAppMessage.importance_score >= importance_threshold,
                 WhatsAppMessage.is_processed.is_(False),
             )
@@ -294,12 +296,17 @@ class WhatsAppMessageRepository(BaseRepository):
     def delete_old_messages(
         self, db: Session, chat_ids: list[int], cutoff_time: datetime
     ) -> int:
-        """Delete old messages for specified chats"""
+        """Delete old messages for specified chats.
+
+        Only processed messages are removed; unprocessed ones are still pending
+        digest delivery regardless of their age.
+        """
         result = (
             db.query(WhatsAppMessage)
             .filter(
                 WhatsAppMessage.chat_id.in_(chat_ids),
                 WhatsAppMessage.timestamp < cutoff_time,
+                WhatsAppMessage.is_processed.is_(True),
             )
             .delete(synchronize_session=False)
         )

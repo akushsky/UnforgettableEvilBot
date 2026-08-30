@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.core.repository_factory import repository_factory
 from app.database.connection import get_db
 from app.dependencies import get_whatsapp_service
@@ -13,7 +14,11 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["web-admin"])
+router = APIRouter(
+    prefix="/admin",
+    tags=["web-admin"],
+    dependencies=[Depends(get_admin_auth_dependency)],
+)
 templates = Jinja2Templates(directory="web/templates")
 
 
@@ -273,6 +278,25 @@ async def update_user_whatsapp_status(
 # --- Digest routes ---
 
 
+def _has_digest_delivery_channel(user, db: Session) -> bool:
+    """Whether DigestScheduler would have somewhere to deliver the digest.
+
+    Mirrors create_and_send_digest: WhatsApp is used only when it is the
+    explicit preference and phone numbers exist; everything else falls back to
+    Telegram.
+    """
+    preference = getattr(user.digest_preference, "name", None)
+
+    if preference == "whatsapp":
+        phone_numbers = repository_factory.get_whatsapp_phone_repository().get_phone_numbers_for_user(
+            db, user.id
+        )
+        if phone_numbers:
+            return True
+
+    return bool(user.telegram_channel_id)
+
+
 @router.post("/users/{user_id}/digest/generate")
 async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db)):
     """Immediate generation and sending of a digest for the user"""
@@ -288,10 +312,14 @@ async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db))
             status_code=400,
             content={"status": "error", "message": "WhatsApp не подключен"},
         )
-    if not user.telegram_channel_id:
+    if not _has_digest_delivery_channel(user, db):
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "message": "Telegram канал не настроен"},
+            content={
+                "status": "error",
+                "message": "Не настроен канал доставки дайджеста "
+                "(Telegram или WhatsApp)",
+            },
         )
 
     try:

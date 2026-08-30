@@ -2,11 +2,12 @@ import time
 from datetime import UTC, datetime
 
 import psutil
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
+from app.auth.admin_auth import get_admin_auth_dependency
 from app.core.alerts import (
     alert_manager,
     check_system_health,
@@ -33,7 +34,10 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["Monitoring"])
+router = APIRouter(
+    tags=["Monitoring"],
+    dependencies=[Depends(get_admin_auth_dependency)],
+)
 templates = Jinja2Templates(directory="web/templates")
 
 process_start_time = psutil.Process().create_time()
@@ -180,7 +184,7 @@ async def get_metrics():
             and openai_stats.get("recent_errors", 0) < 5,
             "telegram_available": await check_telegram_availability(),
             "cache_hit_ratio": memory_hit_ratio,
-            "use_optimized_repositories": settings.USE_OPTIMIZED_REPOSITORIES,
+            "redis_available": cache_stats.get("redis_available", False),
         }
 
         check_system_health(system_data)
@@ -425,7 +429,7 @@ async def trigger_health_check():
             "openai_available": True,
             "telegram_available": True,
             "cache_hit_ratio": 0.8,
-            "use_optimized_repositories": settings.USE_OPTIMIZED_REPOSITORIES,
+            "redis_available": cache_manager.get_stats().get("redis_available", False),
         }
         new_alerts = check_system_health(system_data)
         return {

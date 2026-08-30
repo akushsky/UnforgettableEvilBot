@@ -1,6 +1,9 @@
 import asyncio
 import os
+from pathlib import Path
 from unittest.mock import patch
+
+BRIDGE_JS = Path(__file__).resolve().parents[2] / "whatsapp_bridge" / "bridge.js"
 
 
 # Mock the Node.js environment
@@ -21,6 +24,26 @@ class MockBridge:
         """Mock updateClientState method"""
         current = self.clientStates.get(userId, {})
         self.clientStates[userId] = {**current, **updates}
+
+    @staticmethod
+    def has_usable_active_user_list(active_user_ids):
+        """Mirror of bridge.js hasUsableActiveUserList()"""
+        return isinstance(active_user_ids, list) and len(active_user_ids) > 0
+
+    def restore_decisions(self, active_user_ids, local_session_user_ids):
+        """
+        Mirror of the restore-all decision loop in bridge.js.
+
+        Returns {userId: "restored" | "wiped"}. An empty or missing active user
+        list means "unknown roster" and must never wipe a local session.
+        """
+        can_wipe = self.has_usable_active_user_list(active_user_ids)
+        return {
+            user_id: (
+                "wiped" if can_wipe and user_id not in active_user_ids else "restored"
+            )
+            for user_id in local_session_user_ids
+        }
 
     async def restoreAllClients(self):
         """Mock restoreAllClients method"""
@@ -225,6 +248,30 @@ class TestBridgeConfiguration:
         assert result["status"] == "error"
         assert "All attempts failed" in result["message"]
 
+    def test_restore_never_wipes_on_empty_active_user_list(self):
+        """An empty roster from the backend must not wipe local sessions"""
+        bridge = MockBridge()
+
+        decisions = bridge.restore_decisions([], ["1", "2", "3"])
+
+        assert set(decisions.values()) == {"restored"}
+
+    def test_restore_never_wipes_when_backend_unavailable(self):
+        """A missing roster (backend unreachable) must not wipe local sessions"""
+        bridge = MockBridge()
+
+        decisions = bridge.restore_decisions(None, ["1", "2"])
+
+        assert set(decisions.values()) == {"restored"}
+
+    def test_restore_wipes_only_unknown_users_with_known_roster(self):
+        """With a non-empty roster, only users missing from it are cleaned up"""
+        bridge = MockBridge()
+
+        decisions = bridge.restore_decisions(["1", "3"], ["1", "2", "3"])
+
+        assert decisions == {"1": "restored", "2": "wiped", "3": "restored"}
+
     def test_bridge_configuration_consistency(self):
         """Test that bridge configuration is consistent across different scenarios"""
         # Test with different URL configurations
@@ -243,3 +290,95 @@ class TestBridgeConfiguration:
 
             # Verify URL is set correctly
             assert bridge.pythonBackendUrl == url
+
+
+class TestBridgeSourceInvariants:
+    """
+    Guards on whatsapp_bridge/bridge.js. There is no JS test runner in this repo,
+    so these assert the source keeps the wipe guard and volume-backed state file.
+    """
+
+    @staticmethod
+    def source():
+        return BRIDGE_JS.read_text(encoding="utf-8")
+
+    def test_wipe_guard_requires_non_empty_active_user_list(self):
+        source = self.source()
+
+        assert "hasUsableActiveUserList(activeUserIds) {" in source
+        assert (
+            "return Array.isArray(activeUserIds) && activeUserIds.length > 0;" in source
+        )
+
+    def test_restore_loop_only_wipes_when_roster_is_known(self):
+        source = self.source()
+
+        assert "const canWipe = this.hasUsableActiveUserList(activeUserIds);" in source
+        assert "if (canWipe && !activeUserIds.includes(userId)) {" in source
+        # The old check treated an empty list as authorisation to wipe.
+        assert (
+            "if (activeUserIds !== null && !activeUserIds.includes(userId))"
+            not in source
+        )
+
+    def test_state_file_lives_under_sessions_root(self):
+        source = self.source()
+
+        assert (
+            "this.stateFile = path.join(this.sessionsRoot, 'client_states.json');"
+            in source
+        )
+        assert "this.stateFile = './client_states.json';" not in source
+
+    def test_restore_on_start_is_honored(self):
+        source = self.source()
+
+        assert "RESTORE_ON_START" in source
+        assert "if (!RESTORE_ON_START) {" in source
+
+    def test_disconnect_is_reported_to_backend(self):
+        """A closed connection must notify /disconnected, like /connected does"""
+        source = self.source()
+
+        assert "`${this.pythonBackendUrl}/webhook/whatsapp/disconnected`, {" in source
+        # Must carry the same auth headers as the connected webhook.
+        connected_idx = source.index("/webhook/whatsapp/connected")
+        disconnected_idx = source.index("/webhook/whatsapp/disconnected")
+        for idx in (connected_idx, disconnected_idx):
+            assert "headers: this.backendHeaders()" in source[idx : idx + 800]
+
+    def test_ensure_client_started_awaits_pending_initialization(self):
+        """Returning early left the caller with no client to use"""
+        source = self.source()
+
+        assert "const pending = this.initializing.get(userId);" in source
+        assert "await pending.catch(" in source
+        assert (
+            "if (this.clients.get(userId) || this.initializing.has(userId)) return;"
+            not in source
+        )
+
+    def test_messages_upsert_processes_whole_batch(self):
+        """Taking only m.messages[0] silently dropped batched messages"""
+        source = self.source()
+
+        assert "for (const msg of m.messages || []) {" in source
+        assert "const msg = m.messages[0];" not in source
+
+    def test_get_message_stub_returns_nothing(self):
+        """A fabricated 'hello' body would be re-sent on Baileys retries"""
+        source = self.source()
+
+        assert "getMessage: async () => undefined," in source
+        assert "conversation: 'hello'" not in source
+
+    def test_fresh_pairing_wipes_session_folder(self):
+        """preferExistingSession=false must clear creds so a QR is emitted"""
+        source = self.source()
+
+        assert "if (preferExistingSession) {" in source
+        assert "Wiping session for ${userId} - fresh pairing requested" in source
+        assert (
+            "const hasSession = preferExistingSession ? "
+            "await this.checkSessionExists(userId) : false;" not in source
+        )

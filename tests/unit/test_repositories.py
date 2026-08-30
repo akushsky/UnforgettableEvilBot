@@ -232,7 +232,6 @@ class TestWhatsAppMessageRepository:
         """Test get_important_messages_for_digest method"""
         # Arrange
         chat_id = 1
-        hours_back = 24
         importance_threshold = 3
         mock_messages = [Mock(spec=WhatsAppMessage), Mock(spec=WhatsAppMessage)]
         self.mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
@@ -241,11 +240,29 @@ class TestWhatsAppMessageRepository:
 
         # Act
         result = self.repository.get_important_messages_for_digest(
-            self.mock_db, chat_id, hours_back, importance_threshold
+            self.mock_db, chat_id, importance_threshold
         )
 
         # Assert
         assert result == mock_messages
+
+    def test_get_important_messages_for_digest_has_no_time_window(self):
+        """Unprocessed important messages stay eligible regardless of age"""
+        # Arrange
+        self.mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
+
+        # Act
+        self.repository.get_important_messages_for_digest(self.mock_db, 1)
+
+        # Assert
+        criteria = [
+            str(c) for c in self.mock_db.query.return_value.filter.call_args.args
+        ]
+        assert not any("timestamp" in c for c in criteria), criteria
+        assert any("is_processed IS false" in c for c in criteria), criteria
+        assert any("importance_score >=" in c for c in criteria), criteria
 
     def test_get_messages_count(self):
         """Test get_messages_count method"""
@@ -284,6 +301,22 @@ class TestWhatsAppMessageRepository:
 
         # Assert
         assert result == 5
+
+    def test_delete_old_messages_only_deletes_processed(self):
+        """Cleanup must never delete messages still awaiting a digest"""
+        # Arrange
+        cutoff_time = datetime.utcnow() - timedelta(days=30)
+        self.mock_db.query.return_value.filter.return_value.delete.return_value = 0
+
+        # Act
+        self.repository.delete_old_messages(self.mock_db, [1], cutoff_time)
+
+        # Assert
+        criteria = [
+            str(c) for c in self.mock_db.query.return_value.filter.call_args.args
+        ]
+        assert any("is_processed IS true" in c for c in criteria), criteria
+        assert any("timestamp <" in c for c in criteria), criteria
 
 
 class TestDigestLogRepository:

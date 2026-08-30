@@ -44,7 +44,6 @@ class TestHealthCheck:
     ):
         """Test health endpoint returns 200 when all checks pass."""
         mock_settings.TESTING = True
-        mock_settings.USE_OPTIMIZED_REPOSITORIES = False
 
         mock_health_db.return_value = {
             "status": "healthy",
@@ -96,7 +95,6 @@ class TestHealthCheck:
     ):
         """Test health response includes database check."""
         mock_settings.TESTING = True
-        mock_settings.USE_OPTIMIZED_REPOSITORIES = False
 
         mock_health_db.return_value = {
             "status": "healthy",
@@ -141,7 +139,6 @@ class TestHealthCheck:
     ):
         """Test health response includes system info (CPU, memory, disk)."""
         mock_settings.TESTING = True
-        mock_settings.USE_OPTIMIZED_REPOSITORIES = False
 
         mock_health_db.return_value = {
             "status": "healthy",
@@ -189,7 +186,6 @@ class TestHealthCheck:
     ):
         """Test health returns 503 when database is unhealthy."""
         mock_settings.TESTING = True
-        mock_settings.USE_OPTIMIZED_REPOSITORIES = False
 
         mock_health_db.return_value = {
             "status": "unhealthy",
@@ -232,7 +228,6 @@ class TestHealthCheck:
     ):
         """Test health response includes cache/redis check."""
         mock_settings.TESTING = True
-        mock_settings.USE_OPTIMIZED_REPOSITORIES = False
 
         mock_health_db.return_value = {
             "status": "healthy",

@@ -20,6 +20,31 @@ const pino = require('pino');
 const INIT_TIMEOUT_MS = parseInt(process.env.INIT_TIMEOUT_MS || '45000', 10);
 const MAX_INIT_RETRIES = parseInt(process.env.MAX_INIT_RETRIES || '2', 10);
 const RESTORE_DELAY_MS = parseInt(process.env.RESTORE_DELAY_MS || '8000', 10);
+// When disabled, the supervisor (docker/start.sh) triggers /restore-all once the API is up.
+const RESTORE_ON_START = !['0', 'false', 'no', 'off'].includes(
+  String(process.env.RESTORE_ON_START ?? '1').trim().toLowerCase()
+);
+const MESSAGE_POST_ATTEMPTS = parseInt(process.env.MESSAGE_POST_ATTEMPTS || '3', 10);
+const MESSAGE_POST_BACKOFF_MS = parseInt(process.env.MESSAGE_POST_BACKOFF_MS || '1000', 10);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Text carried by a message, including media captions. */
+function extractMessageContent(message) {
+  const payload = message?.message || {};
+  const inner = payload.ephemeralMessage?.message || payload.viewOnceMessage?.message
+    || payload.viewOnceMessageV2?.message || payload.documentWithCaptionMessage?.message || null;
+
+  return (
+    payload.conversation
+    || payload.extendedTextMessage?.text
+    || payload.imageMessage?.caption
+    || payload.videoMessage?.caption
+    || payload.documentMessage?.caption
+    || (inner ? extractMessageContent({ message: inner }) : '')
+    || ''
+  );
+}
 
 class BaileysWhatsAppBridge {
   constructor() {
@@ -36,14 +61,21 @@ class BaileysWhatsAppBridge {
 
     this.app = express();
     this.pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:9876';
+    this.webhookSecret = process.env.BRIDGE_WEBHOOK_SECRET || '';
+    if (!this.webhookSecret) {
+      console.warn('BRIDGE_WEBHOOK_SECRET is not set - backend webhooks will be rejected unless the backend runs in DEBUG mode');
+    }
 
-    this.stateFile = './client_states.json';
-    this.sessionsRoot = process.env.WHATSAPP_SESSION_PATH || path.resolve('./sessions');
+    this.sessionsRoot = path.resolve(process.env.WHATSAPP_SESSION_PATH || './sessions');
     console.log(`Baileys WhatsApp Bridge sessions root: ${this.sessionsRoot}`);
     if (!fssync.existsSync(this.sessionsRoot)) {
       console.log(`Creating sessions directory: ${this.sessionsRoot}`);
       fssync.mkdirSync(this.sessionsRoot, { recursive: true });
     }
+
+    // Keep the state file next to the sessions so it lives on the same persistent volume.
+    this.stateFile = path.join(this.sessionsRoot, 'client_states.json');
+    this.migrateLegacyStateFile();
 
     // Log environment info for debugging
     console.log('Environment info:');
@@ -54,6 +86,15 @@ class BaileysWhatsAppBridge {
     this.setupExpress();
     this.loadPersistedStates().catch(() => {});
     this.startAutoReconnect();
+  }
+
+  /** Headers for every call to the Python backend webhooks. */
+  backendHeaders(extra = {}) {
+    const headers = { 'User-Agent': 'WhatsApp-Bridge/1.0', ...extra };
+    if (this.webhookSecret) {
+      headers['X-Bridge-Secret'] = this.webhookSecret;
+    }
+    return headers;
   }
 
   /* -------------------------- Express routes -------------------------- */
@@ -133,7 +174,7 @@ class BaileysWhatsAppBridge {
         try {
           const response = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/active-users`, {
             timeout: 10000,
-            headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+            headers: this.backendHeaders()
           });
           if (response.status === 200) {
             activeUserIds = response.data.active_users.map(user => user.id.toString());
@@ -144,7 +185,15 @@ class BaileysWhatsAppBridge {
           return res.status(500).json({ error: 'Failed to get active users from backend' });
         }
 
-        await this.validateAndCleanupPersistedState(activeUserIds);
+        const outcome = await this.validateAndCleanupPersistedState(activeUserIds);
+        if (outcome && outcome.skipped) {
+          return res.json({
+            message: 'Stale state cleanup skipped - backend reported no active users',
+            skipped: true,
+            reason: outcome.reason,
+            activeUsers: activeUserIds
+          });
+        }
         res.json({ message: 'Stale state cleanup completed', activeUsers: activeUserIds });
       } catch (error) {
         console.error('Error during manual cleanup:', error);
@@ -371,7 +420,14 @@ class BaileysWhatsAppBridge {
   /* ----------------------- Lifecycle / initialization ----------------------- */
 
   async ensureClientStarted(userId) {
-    if (this.clients.get(userId) || this.initializing.has(userId)) return;
+    if (this.clients.get(userId)) return;
+    // A concurrent caller is already starting this client - wait for it rather
+    // than returning to a caller that will immediately find no client.
+    const pending = this.initializing.get(userId);
+    if (pending) {
+      await pending.catch((e) => console.error(`ensureClientStarted: pending init failed for ${userId}:`, e?.message || e));
+      return;
+    }
     try {
       await this.initializeClientWithReconnect(userId, { preferExistingSession: true });
     }
@@ -400,7 +456,21 @@ class BaileysWhatsAppBridge {
         } catch (_) {}
       }
 
-      const hasSession = preferExistingSession ? await this.checkSessionExists(userId) : false;
+      let hasSession = false;
+      if (preferExistingSession) {
+        hasSession = await this.checkSessionExists(userId);
+      } else {
+        // A fresh pairing was requested: the old credentials must go, otherwise
+        // useMultiFileAuthState reuses them and no QR is ever emitted.
+        console.log(`Wiping session for ${userId} - fresh pairing requested`);
+        try {
+          await fs.rm(this.sessionFolderFor(userId), { recursive: true, force: true });
+        } catch (e) {
+          console.error(`[init] session wipe failed for ${userId}:`, e?.message || e);
+        }
+        this.persistentChats.delete(userId);
+        this.qrCodes.delete(userId);
+      }
       console.log(`Initializing Baileys client for ${userId} (hasSession=${hasSession})`);
 
       let lastError = null;
@@ -426,11 +496,9 @@ class BaileysWhatsAppBridge {
             defaultQueryTimeoutMs: 60000,
             emitOwnEvents: false,
             generateHighQualityLinkPreview: true,
-            getMessage: async () => {
-              return {
-                conversation: 'hello'
-              }
-            }
+            // No outgoing message store here: returning a fabricated body would
+            // make Baileys re-send bogus content on retry requests.
+            getMessage: async () => undefined,
           });
 
           // attach handlers once per attempt
@@ -544,7 +612,7 @@ class BaileysWhatsAppBridge {
           userId,
           timestamp: new Date().toISOString(),
           clientInfo: client.user || { connected: true },
-        }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
+        }, { headers: this.backendHeaders() }).catch((err) => console.error(`notify backend failed ${userId}:`, err));
 
         this.qrCodes.delete(userId);
 
@@ -579,6 +647,18 @@ class BaileysWhatsAppBridge {
           disconnectReason: lastDisconnect?.error?.message || 'unknown',
         });
 
+        // Mirror of the /connected notification so the backend does not keep
+        // reporting a dead session as connected.
+        axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/disconnected`, {
+          userId,
+          timestamp: new Date().toISOString(),
+          clientInfo: {
+            connected: false,
+            loggedOut: !shouldReconnect,
+            reason: lastDisconnect?.error?.message || 'unknown',
+          },
+        }, { headers: this.backendHeaders() }).catch((err) => console.error(`notify backend disconnect failed ${userId}:`, err?.message || err));
+
         if (shouldReconnect) {
           const old = this.reconnectTimeouts.get(userId);
           if (old) clearTimeout(old);
@@ -591,8 +671,9 @@ class BaileysWhatsAppBridge {
     client.ev.on('creds.update', saveCreds);
 
     client.ev.on('messages.upsert', async (m) => {
-      const msg = m.messages[0];
-      if (!msg.key.fromMe && msg.message) {
+      // A single upsert can carry a batch; taking only [0] silently dropped the rest.
+      for (const msg of m.messages || []) {
+        if (!msg?.key || msg.key.fromMe || !msg.message) continue;
         console.log(`MESSAGE for ${userId}: ${msg.message.conversation?.substring(0, 50) || 'media'}...`);
         try {
           await this.handleIncomingMessage(userId, msg);
@@ -753,7 +834,7 @@ class BaileysWhatsAppBridge {
 
     const chatId = message.key.remoteJid;
     const sender = message.key.participant || message.key.remoteJid;
-    const content = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
+    const content = extractMessageContent(message);
     const timestamp = new Date(message.messageTimestamp * 1000).toISOString();
 
     // Get chat info
@@ -796,12 +877,7 @@ class BaileysWhatsAppBridge {
       hasMedia: !!(message.message?.imageMessage || message.message?.videoMessage || message.message?.audioMessage || message.message?.documentMessage),
     };
 
-    try {
-      await axios.post(`${this.pythonBackendUrl}/webhook/whatsapp/message`, messageData);
-      console.log(`forwarded msg ${userId}`);
-    } catch (error) {
-      console.error(`forward msg failed ${userId}:`, error);
-    }
+    await this.postMessageWithRetry(userId, messageData);
 
     // Ensure chat exists in cache
     try {
@@ -812,7 +888,36 @@ class BaileysWhatsAppBridge {
     } catch (_) {}
   }
 
+  /**
+   * Forward a message to the backend, retrying transient failures.
+   * Retries on 429 / 5xx and on network errors; 4xx other than 429 are final.
+   */
+  async postMessageWithRetry(userId, messageData, attempts = MESSAGE_POST_ATTEMPTS) {
+    const url = `${this.pythonBackendUrl}/webhook/whatsapp/message`;
 
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await axios.post(url, messageData, { headers: this.backendHeaders(), timeout: 15000 });
+        console.log(`forwarded msg ${userId}`);
+        return true;
+      } catch (error) {
+        const status = error?.response?.status;
+        const retryable = status === undefined || status === 429 || status >= 500;
+        const detail = status ? `HTTP ${status}` : (error?.code || error?.message || 'unknown error');
+
+        if (!retryable || attempt === attempts) {
+          console.error(`forward msg failed ${userId} (${detail}) after ${attempt} attempt(s)`);
+          return false;
+        }
+
+        const delay = MESSAGE_POST_BACKOFF_MS * 2 ** (attempt - 1);
+        console.warn(`forward msg retry ${attempt}/${attempts - 1} for ${userId} in ${delay}ms (${detail})`);
+        await sleep(delay);
+      }
+    }
+
+    return false;
+  }
 
   /* -------------------- Chats / Store readiness & fetch -------------------- */
 
@@ -906,6 +1011,20 @@ class BaileysWhatsAppBridge {
     }
   }
 
+  /** Older builds wrote client_states.json into the working directory instead of the volume. */
+  migrateLegacyStateFile() {
+    const legacy = path.resolve('./client_states.json');
+    if (legacy === this.stateFile) return;
+    try {
+      if (fssync.existsSync(legacy) && !fssync.existsSync(this.stateFile)) {
+        fssync.copyFileSync(legacy, this.stateFile);
+        console.log(`Migrated legacy state file ${legacy} -> ${this.stateFile}`);
+      }
+    } catch (error) {
+      console.error('Failed to migrate legacy state file:', error.message);
+    }
+  }
+
   async loadPersistedStates() {
     try {
       const data = await fs.readFile(this.stateFile, 'utf8');
@@ -930,8 +1049,24 @@ class BaileysWhatsAppBridge {
     } catch { return false; }
   }
 
+  /**
+   * True only when the backend gave us a usable, non-empty roster of active users.
+   * An empty or missing list means "unknown" - never a licence to wipe sessions.
+   */
+  hasUsableActiveUserList(activeUserIds) {
+    return Array.isArray(activeUserIds) && activeUserIds.length > 0;
+  }
+
   async validateAndCleanupPersistedState(activeUserIds) {
     console.log('Validating persisted state against active users...');
+
+    if (!this.hasUsableActiveUserList(activeUserIds)) {
+      console.warn(
+        'Skipping stale-state cleanup: active user list is empty or unavailable. ' +
+        'Refusing to wipe persisted client states without a known-good roster.'
+      );
+      return { skipped: true, reason: 'empty_active_user_list' };
+    }
 
     // Check for stale client states
     const staleStateUsers = Array.from(this.clientStates.keys()).filter(
@@ -972,6 +1107,11 @@ class BaileysWhatsAppBridge {
     this.server = this.app.listen(port, () => {
       console.log(`Baileys WhatsApp Bridge listening on port ${port}`);
     });
+
+    if (!RESTORE_ON_START) {
+      console.log('RESTORE_ON_START is disabled - waiting for an explicit POST /restore-all');
+      return;
+    }
 
     if (!this.restoreScheduled) {
       this.restoreScheduled = true;
@@ -1145,7 +1285,7 @@ class BaileysWhatsAppBridge {
         try {
           const healthResponse = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/health`, {
             timeout: 5000,
-            headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+            headers: this.backendHeaders()
           });
           console.log(`Backend health check successful: ${healthResponse.status}`);
         } catch (healthError) {
@@ -1163,7 +1303,7 @@ class BaileysWhatsAppBridge {
             console.log(`Attempting to connect to backend (attempt ${attempt}/5)...`);
             const response = await axios.get(`${this.pythonBackendUrl}/webhook/whatsapp/active-users`, {
               timeout: 10000,
-              headers: { 'User-Agent': 'WhatsApp-Bridge/1.0' }
+              headers: this.backendHeaders()
             });
             if (response.status === 200) {
               activeUserIds = response.data.active_users.map(user => user.id.toString());
@@ -1186,8 +1326,16 @@ class BaileysWhatsAppBridge {
           activeUserIds = null;
         }
 
-        // Validate and clean up stale persisted state
-        if (backendAvailable && activeUserIds.length > 0) {
+        // An empty roster is indistinguishable from a backend that is not ready yet, so it
+        // must never authorise a wipe - the sessions on disk are the only source of truth.
+        const canWipe = this.hasUsableActiveUserList(activeUserIds);
+        if (!canWipe) {
+          console.warn(
+            `Not wiping any sessions during restore-all: active user list is ${
+              activeUserIds === null ? 'unavailable (backend unreachable)' : 'empty'
+            }. All local sessions will be restored as-is.`
+          );
+        } else {
           await this.validateAndCleanupPersistedState(activeUserIds);
         }
 
@@ -1199,8 +1347,8 @@ class BaileysWhatsAppBridge {
           const has = await this.checkSessionExists(userId);
           if (!has) continue;
 
-          // Skip suspended users
-          if (activeUserIds !== null && !activeUserIds.includes(userId)) {
+          // Skip suspended users (only when we actually know who is active)
+          if (canWipe && !activeUserIds.includes(userId)) {
             console.log(`Skipping suspended user ${userId} - disconnecting if connected`);
             try {
               await this.cleanupClient(userId);

@@ -32,14 +32,66 @@ class TestAdminAuth:
         with patch.object(settings, "ADMIN_PASSWORD", "test123"):
             assert verify_admin_password("wrong") is False
 
+    def test_verify_admin_password_prefix_is_rejected(self):
+        """Test that a prefix of the password is not accepted"""
+        with patch.object(settings, "ADMIN_PASSWORD", "test123"):
+            assert verify_admin_password("test") is False
+            assert verify_admin_password("test1234") is False
+            assert verify_admin_password("") is False
+
+    def test_verify_admin_password_not_configured(self):
+        """Test that an unset admin password rejects every attempt"""
+        with patch.object(settings, "ADMIN_PASSWORD", ""):
+            assert verify_admin_password("") is False
+            assert verify_admin_password("anything") is False
+
+    def test_verify_admin_password_uses_constant_time_compare(self):
+        """Test that password comparison goes through hmac.compare_digest"""
+        with (
+            patch.object(settings, "ADMIN_PASSWORD", "test123"),
+            patch("app.auth.admin_auth.hmac.compare_digest") as mock_compare,
+        ):
+            mock_compare.return_value = True
+
+            assert verify_admin_password("test123") is True
+            mock_compare.assert_called_once_with(b"test123", b"test123")
+
+    def test_verify_admin_password_non_ascii(self):
+        """Test that non-ASCII passwords are compared without raising"""
+        with patch.object(settings, "ADMIN_PASSWORD", "пароль"):
+            assert verify_admin_password("пароль") is True
+            assert verify_admin_password("parol") is False
+
     def test_create_admin_session(self):
-        """Test admin session creation"""
+        """Test admin session creation uses a random opaque identifier"""
         mock_request = Mock()
         mock_request.client.host = "127.0.0.1"
 
         session_id = create_admin_session(mock_request)
 
-        assert session_id.startswith("admin_127.0.0.1_")
+        assert session_id in admin_sessions
+        # token_urlsafe(32) yields 43 url-safe characters
+        assert len(session_id) >= 43
+        assert "admin_" not in session_id
+        assert "127.0.0.1" not in session_id
+
+    def test_create_admin_session_ids_are_unique(self):
+        """Test that repeated sessions from the same client are not guessable"""
+        mock_request = Mock()
+        mock_request.client.host = "127.0.0.1"
+
+        session_ids = {create_admin_session(mock_request) for _ in range(10)}
+
+        assert len(session_ids) == 10
+        assert session_ids <= admin_sessions
+
+    def test_create_admin_session_without_client(self):
+        """Test session creation when the request has no client info"""
+        mock_request = Mock()
+        mock_request.client = None
+
+        session_id = create_admin_session(mock_request)
+
         assert session_id in admin_sessions
 
     def test_is_admin_authenticated_with_valid_session(self):

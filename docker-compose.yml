@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: whatsapp-digest-db
     restart: unless-stopped
     environment:
@@ -56,6 +56,11 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - PYTHON_BACKEND_URL=http://127.0.0.1:9876
+      - BRIDGE_WEBHOOK_SECRET=${BRIDGE_WEBHOOK_SECRET:-}
+      # Sessions and bridge state must live on the mounted volume
+      - WHATSAPP_SESSION_PATH=/app/whatsapp_sessions
+      # start.sh triggers /restore-all once the API is reachable
+      - RESTORE_ON_START=0
     volumes:
       - ./whatsapp_sessions:/app/whatsapp_sessions
       - ./logs:/app/logs
