@@ -207,12 +207,112 @@ def test_get_qr_code(mock_repo_factory, mock_httpx, client):
     mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
     mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    response = client.get("/admin/users/1/qr")
+    with patch("app.api.admin_routes.get_whatsapp_service") as mock_get_wa:
+        response = client.get("/admin/users/1/qr")
+        mock_get_wa.assert_not_called()
 
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
     assert "qr_code" in data
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.httpx")
+@patch("app.api.admin_routes.repository_factory")
+def test_get_qr_code_404_initializes_client_then_pending(
+    mock_repo_factory, mock_httpx, mock_get_wa, client
+):
+    """When bridge has no QR yet, kick off initialize and return pending."""
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = Mock()
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    missing = Mock(status_code=404, text="QR code not available")
+    still_missing = Mock(status_code=404, text="QR code not available")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=[missing, still_missing])
+    mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    mock_wa = AsyncMock()
+    mock_wa.initialize_client = AsyncMock(return_value=True)
+    mock_get_wa.return_value = mock_wa
+
+    response = client.get("/admin/users/1/qr")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "pending"
+    mock_wa.initialize_client.assert_awaited_once_with(1)
+    assert mock_client.get.await_count == 2
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.httpx")
+@patch("app.api.admin_routes.repository_factory")
+def test_get_qr_code_404_returns_qr_after_initialize(
+    mock_repo_factory, mock_httpx, mock_get_wa, client
+):
+    """If initialize emits a QR quickly, return success on the retry GET."""
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = Mock()
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    missing = Mock(status_code=404, text="QR code not available")
+    ready = Mock()
+    ready.status_code = 200
+    ready.json.return_value = {
+        "qrCode": "data:image/png;base64,yyy",
+        "timestamp": "456",
+    }
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=[missing, ready])
+    mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    mock_wa = AsyncMock()
+    mock_wa.initialize_client = AsyncMock(return_value=True)
+    mock_get_wa.return_value = mock_wa
+
+    response = client.get("/admin/users/1/qr")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["qr_code"] == "data:image/png;base64,yyy"
+    mock_wa.initialize_client.assert_awaited_once_with(1)
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.httpx")
+@patch("app.api.admin_routes.repository_factory")
+def test_get_qr_code_404_initialize_failure(
+    mock_repo_factory, mock_httpx, mock_get_wa, client
+):
+    """Failed initialize must surface as an error, not endless pending."""
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = Mock()
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    missing = Mock(status_code=404, text="QR code not available")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=missing)
+    mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    mock_wa = AsyncMock()
+    mock_wa.initialize_client = AsyncMock(return_value=False)
+    mock_get_wa.return_value = mock_wa
+
+    response = client.get("/admin/users/1/qr")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert data["status"] == "error"
+    assert "WhatsApp" in data["message"]
+    mock_wa.initialize_client.assert_awaited_once_with(1)
+    assert mock_client.get.await_count == 1
 
 
 @patch("app.api.admin_routes.httpx")
