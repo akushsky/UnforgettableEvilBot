@@ -1,0 +1,15 @@
+---
+description: UnforgettableEvilBot / relay.jroots.co project context for agents
+alwaysApply: true
+---
+
+# UnforgettableEvilBot
+
+Read [AGENTS.md](../../AGENTS.md) for commands, architecture, and landmines.
+
+- **Prod:** https://relay.jroots.co/ — Coolify/Hetzner next to jroots.co; **not** on the external `coolify` Docker mesh.
+- **One container, two processes:** Baileys bridge `:3000` + FastAPI `:9876` via `docker/start.sh` (loopback webhooks).
+- **Two WhatsApp stacks:** Baileys = inbound/QR; Official Business API = outbound digests only.
+- Default tests: `pytest tests/unit/`. Schema via Alembic. Do not commit secrets or session files.
+- Do not invent Baileys bypasses or unauthorized access helpers.
+- Bugfixes are a separate step after reading AGENTS landmines (bridge state, create_all vs alembic, stale docs).
