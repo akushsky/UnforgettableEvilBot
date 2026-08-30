@@ -10,7 +10,8 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # noqa: S105 - header name, not a credential
+# Header name only — not a credential value (Bandit B105 / Ruff S105 false positive).
+BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # nosec B105  # noqa: S105
 FORWARDING_HEADERS = ("X-Forwarded-For", "X-Real-IP")
 LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -82,7 +83,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if not configured_secret:
             return False
 
-        provided_secret = request.headers.get(BRIDGE_SECRET_HEADER)
+        provided_secret = request.headers.get(BRIDGE_AUTH_HEADER)
         if not provided_secret:
             return False
 

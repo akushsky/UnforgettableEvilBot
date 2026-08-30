@@ -14,7 +14,8 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # noqa: S105 - header name, not a credential
+# Header name only — not a credential value (Bandit B105 / Ruff S105 false positive).
+BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # nosec B105  # noqa: S105
 
 
 def verify_bridge_secret(
