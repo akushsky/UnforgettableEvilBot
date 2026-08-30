@@ -165,9 +165,7 @@ async def get_user_qr_code(user_id: int, db: Session = Depends(get_db)):
                         "message": "QR-код готов для сканирования",
                     }
 
-                logger.debug(
-                    f"Client initialized for user {user_id}; QR still pending"
-                )
+                logger.debug(f"Client initialized for user {user_id}; QR still pending")
                 return {
                     "status": "pending",
                     "message": "QR-код пока не готов, попробуйте через несколько секунд",
