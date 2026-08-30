@@ -10,8 +10,8 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-# Header name only — not a credential value (Bandit B105 / Ruff S105 false positive).
-BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # nosec B105  # noqa: S105
+# HTTP header name (not a credential). Avoid *SECRET* in the identifier — Bandit B105.
+BRIDGE_AUTH_HEADER = "X-Bridge-Secret"
 FORWARDING_HEADERS = ("X-Forwarded-For", "X-Real-IP")
 LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
 

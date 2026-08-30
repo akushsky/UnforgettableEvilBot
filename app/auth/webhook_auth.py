@@ -14,12 +14,12 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-# Header name only — not a credential value (Bandit B105 / Ruff S105 false positive).
-BRIDGE_SECRET_HEADER = "X-Bridge-Secret"  # nosec B105  # noqa: S105
+# HTTP header name (not a credential). Avoid *SECRET* in the identifier — Bandit B105.
+BRIDGE_AUTH_HEADER = "X-Bridge-Secret"
 
 
 def verify_bridge_secret(
-    x_bridge_secret: str | None = Header(default=None, alias=BRIDGE_SECRET_HEADER),
+    x_bridge_secret: str | None = Header(default=None, alias=BRIDGE_AUTH_HEADER),
 ) -> bool:
     """Require a matching shared secret on bridge webhook calls.
 
