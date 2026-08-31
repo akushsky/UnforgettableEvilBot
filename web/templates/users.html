@@ -222,11 +222,35 @@
                     <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
                 </div>
 
-                <div id="qr-container">
-                    <div class="py-4" id="qr-placeholder">
-                        <i class="fas fa-qrcode fa-4x text-muted mb-3"></i>
-                        <h5>Инициализация WhatsApp клиента...</h5>
-                        <p class="text-muted">Подождите, генерируем QR-код</p>
+                <ul class="nav nav-pills justify-content-center mb-3" id="pairingTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-qr" data-bs-toggle="pill" data-bs-target="#pane-qr" type="button" role="tab">QR-код</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-phone" data-bs-toggle="pill" data-bs-target="#pane-phone" type="button" role="tab">По номеру</button>
+                    </li>
+                </ul>
+
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="pane-qr" role="tabpanel">
+                        <div id="qr-container">
+                            <div class="py-4" id="qr-placeholder">
+                                <i class="fas fa-qrcode fa-4x text-muted mb-3"></i>
+                                <h5>Инициализация WhatsApp клиента...</h5>
+                                <p class="text-muted">Подождите, генерируем QR-код</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-phone" role="tabpanel">
+                        <div id="pair-code-container" class="py-3">
+                            <p class="text-muted">Привязка через код (как «Связать по номеру телефона» в WhatsApp)</p>
+                            <div class="input-group mb-3 mx-auto" style="max-width: 360px;">
+                                <span class="input-group-text">+</span>
+                                <input type="tel" class="form-control" id="pair-phone-input" placeholder="9725XXXXXXXX" autocomplete="tel">
+                                <button class="btn btn-success" type="button" onclick="requestPairingCode()">Получить код</button>
+                            </div>
+                            <div id="pair-code-result"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -246,6 +270,18 @@
 let currentUserId = null;
 let currentQRCode = null;
 let qrCheckInterval = null;
+let qrRefreshInterval = null;
+let qrExpiryInterval = null;
+let connectionMonitorInterval = null;
+let qrShownAt = null;
+const QR_TTL_SECONDS = 20;
+
+function clearPairingTimers() {
+    if (qrCheckInterval) { clearInterval(qrCheckInterval); qrCheckInterval = null; }
+    if (qrRefreshInterval) { clearInterval(qrRefreshInterval); qrRefreshInterval = null; }
+    if (qrExpiryInterval) { clearInterval(qrExpiryInterval); qrExpiryInterval = null; }
+    if (connectionMonitorInterval) { clearInterval(connectionMonitorInterval); connectionMonitorInterval = null; }
+}
 
 function togglePassword() {
     const passwordInput = document.getElementById('password');
@@ -264,17 +300,20 @@ function togglePassword() {
 
 async function connectWhatsApp(userId) {
     currentUserId = userId;
-    const button = event.target.closest('button');
-    const originalContent = button.innerHTML;
+    const button = (typeof event !== 'undefined' && event && event.target)
+        ? event.target.closest('button') : null;
+    const originalContent = button ? button.innerHTML : null;
 
-    button.disabled = true;
-    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
 
-    // Показываем модальное окно
+    clearPairingTimers();
+
     const qrModal = new bootstrap.Modal(document.getElementById('qrModal'));
     qrModal.show();
 
-    // Сбрасываем содержимое контейнера
     const container = document.getElementById('qr-container');
     container.innerHTML = `
         <div class="py-4" id="qr-placeholder">
@@ -283,8 +322,9 @@ async function connectWhatsApp(userId) {
             <p class="text-muted">Подождите, генерируем QR-код</p>
         </div>
     `;
+    const pairResult = document.getElementById('pair-code-result');
+    if (pairResult) pairResult.innerHTML = '';
 
-    // Показываем прогресс бар
     const progressBar = document.getElementById('qr-progress');
     progressBar.style.display = 'block';
     animateProgressBar();
@@ -294,11 +334,10 @@ async function connectWhatsApp(userId) {
         const result = await response.json();
 
         if (result.status === 'success' && result.qr_code) {
-            // QR-код готов
             displayQRCode(result.qr_code, result.timestamp);
+            startLiveQRRefresh();
             startQRCodeMonitoring();
         } else if (result.status === 'pending' || result.status === 'success') {
-            // Клиент инициализирован, ждем QR-код
             showWaitingForQR();
             startQRCodeCheck();
         } else {
@@ -308,28 +347,35 @@ async function connectWhatsApp(userId) {
         showError('Ошибка подключения: ' + error.message);
     } finally {
         progressBar.style.display = 'none';
-        button.disabled = false;
-        button.innerHTML = originalContent;
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalContent;
+        }
     }
 }
 
 function displayQRCode(qrCodeDataUrl, timestamp) {
     const container = document.getElementById('qr-container');
     currentQRCode = qrCodeDataUrl;
+    qrShownAt = Date.now();
 
     container.innerHTML = `
         <div class="qr-code-display">
             <div class="mb-3">
-                <img src="${qrCodeDataUrl}" alt="WhatsApp QR Code"
+                <img id="qr-image" src="${qrCodeDataUrl}" alt="WhatsApp QR Code"
                      class="img-fluid border rounded shadow"
                      style="max-width: 256px; max-height: 256px;">
             </div>
             <h6 class="text-success">
                 <i class="fas fa-qrcode"></i> QR-код готов к сканированию
             </h6>
-            <p class="text-muted small">
+            <p class="text-muted small mb-1">
                 Создан: ${new Date(timestamp).toLocaleString('ru-RU')}
             </p>
+            <p class="small" id="qr-ttl">Код обновляется автоматически (~${QR_TTL_SECONDS}с)</p>
+            <div id="qr-stale-banner" class="alert alert-warning py-2 d-none">
+                Код устарел — нажмите «Обновить» или дождитесь автообновления
+            </div>
             <div class="d-flex gap-2 justify-content-center flex-wrap mb-3">
                 <button class="btn btn-outline-success btn-sm" onclick="refreshQRCode()" title="Обновить QR-код">
                     <i class="fas fa-sync"></i> Обновить
@@ -350,6 +396,56 @@ function displayQRCode(qrCodeDataUrl, timestamp) {
             </div>
         </div>
     `;
+    startQrExpiryTicker();
+}
+
+function startQrExpiryTicker() {
+    if (qrExpiryInterval) clearInterval(qrExpiryInterval);
+    qrExpiryInterval = setInterval(() => {
+        const ttlEl = document.getElementById('qr-ttl');
+        const banner = document.getElementById('qr-stale-banner');
+        if (!ttlEl || !qrShownAt) return;
+        const age = Math.floor((Date.now() - qrShownAt) / 1000);
+        const left = Math.max(0, QR_TTL_SECONDS - age);
+        if (left > 0) {
+            ttlEl.textContent = `Обновится через ~${left}с`;
+            ttlEl.className = 'small text-muted';
+            if (banner) banner.classList.add('d-none');
+        } else {
+            ttlEl.textContent = 'Код мог устареть — обновляем…';
+            ttlEl.className = 'small text-warning';
+            if (banner) banner.classList.remove('d-none');
+        }
+    }, 1000);
+}
+
+function startLiveQRRefresh() {
+    if (qrRefreshInterval) clearInterval(qrRefreshInterval);
+    qrRefreshInterval = setInterval(async () => {
+        if (!currentUserId) return;
+        try {
+            const response = await fetch(`/admin/users/${currentUserId}/qr/check`);
+            const result = await response.json();
+            if (result.status === 'ready' && result.qr_code) {
+                const img = document.getElementById('qr-image');
+                if (img && result.qr_code !== currentQRCode) {
+                    currentQRCode = result.qr_code;
+                    img.src = result.qr_code;
+                    qrShownAt = Date.now();
+                    const banner = document.getElementById('qr-stale-banner');
+                    if (banner) banner.classList.add('d-none');
+                }
+            } else if (result.status === 'not_ready') {
+                const banner = document.getElementById('qr-stale-banner');
+                if (banner) {
+                    banner.classList.remove('d-none');
+                    banner.innerHTML = 'Код устарел — <button class="btn btn-sm btn-warning" onclick="refreshQRCode()">Обновить</button>';
+                }
+            }
+        } catch (e) {
+            console.error('QR refresh failed:', e);
+        }
+    }, 15000);
 }
 
 function showWaitingForQR() {
@@ -364,6 +460,7 @@ function showWaitingForQR() {
 }
 
 function showError(message) {
+    clearPairingTimers();
     const container = document.getElementById('qr-container');
     container.innerHTML = `
         <div class="py-4">
@@ -371,7 +468,7 @@ function showError(message) {
             <h5>Ошибка</h5>
             <p class="text-danger">${message}</p>
             <button class="btn btn-primary" onclick="connectWhatsApp(${currentUserId})">
-                <i class="fas fa-redo"></i> Попробовать снова
+                <i class="fas fa-redo"></i> Начать заново
             </button>
         </div>
     `;
@@ -396,7 +493,9 @@ function startQRCodeCheck() {
 
             if (result.status === 'success' && result.qr_code) {
                 clearInterval(qrCheckInterval);
+                qrCheckInterval = null;
                 displayQRCode(result.qr_code, result.timestamp);
+                startLiveQRRefresh();
                 startQRCodeMonitoring();
             } else if (result.status === 'error') {
                 clearInterval(qrCheckInterval);
@@ -416,34 +515,39 @@ function startQRCodeCheck() {
 }
 
 function startQRCodeMonitoring() {
+    if (connectionMonitorInterval) clearInterval(connectionMonitorInterval);
     let attempts = 0;
-    const maxAttempts = 36; // ~3 minutes at 5s
+    const maxAttempts = 36;
 
-    const monitoringInterval = setInterval(async () => {
+    connectionMonitorInterval = setInterval(async () => {
         attempts++;
         try {
             const response = await fetch(`/admin/users/${currentUserId}/whatsapp/status`);
             if (!response.ok) {
-                clearInterval(monitoringInterval);
+                clearPairingTimers();
                 showError('Ошибка проверки статуса WhatsApp (HTTP ' + response.status + ')');
                 return;
             }
             const userData = await response.json();
 
+            if (userData.pairing_stopped) {
+                clearPairingTimers();
+                showError(userData.pairing_stop_reason || 'Привязка остановлена. Начните заново.');
+                return;
+            }
+
             if (userData.whatsapp_connected === true || userData.bridge_connected === true) {
-                clearInterval(monitoringInterval);
+                clearPairingTimers();
                 showConnectionSuccess();
-                setTimeout(() => {
-                    location.reload();
-                }, 3000);
+                setTimeout(() => location.reload(), 3000);
             } else if (attempts >= maxAttempts) {
-                clearInterval(monitoringInterval);
-                showError('Время ожидания подключения WhatsApp истекло. Попробуйте еще раз.');
+                clearPairingTimers();
+                showError('Время ожидания подключения WhatsApp истекло. Начните заново.');
             }
         } catch (error) {
             console.error('Error monitoring connection:', error);
             if (attempts >= maxAttempts) {
-                clearInterval(monitoringInterval);
+                clearPairingTimers();
                 showError('Ошибка проверки статуса: ' + error.message);
             }
         }
@@ -459,10 +563,51 @@ function showConnectionSuccess() {
             <p class="text-muted">Страница перезагрузится через несколько секунд</p>
         </div>
     `;
+    const pairResult = document.getElementById('pair-code-result');
+    if (pairResult) {
+        pairResult.innerHTML = '<div class="alert alert-success">WhatsApp подключен успешно!</div>';
+    }
 }
 
 function refreshQRCode() {
     connectWhatsApp(currentUserId);
+}
+
+async function requestPairingCode() {
+    if (!currentUserId) {
+        alert('Сначала откройте подключение для пользователя');
+        return;
+    }
+    const phoneInput = document.getElementById('pair-phone-input');
+    const resultEl = document.getElementById('pair-code-result');
+    const phone = (phoneInput && phoneInput.value || '').trim();
+    if (!phone) {
+        resultEl.innerHTML = '<div class="alert alert-warning">Укажите номер телефона (E.164, например 9725…)</div>';
+        return;
+    }
+    resultEl.innerHTML = '<div class="text-muted"><i class="fas fa-spinner fa-spin"></i> Запрашиваем код…</div>';
+    try {
+        const response = await fetch(`/admin/users/${currentUserId}/pair-code`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone }),
+        });
+        const result = await response.json();
+        if (result.status === 'success' && result.code) {
+            const pretty = String(result.code).replace(/(.{4})/g, '$1 ').trim();
+            resultEl.innerHTML = `
+                <div class="alert alert-success">
+                    <div class="display-6 fw-bold mb-2">${pretty}</div>
+                    <p class="mb-0">В WhatsApp: Связанные устройства → Связать по номеру телефона → введите этот код</p>
+                </div>
+            `;
+            startQRCodeMonitoring();
+        } else {
+            resultEl.innerHTML = `<div class="alert alert-danger">${result.message || 'Не удалось получить код'}</div>`;
+        }
+    } catch (e) {
+        resultEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    }
 }
 
 function downloadQRCode() {
@@ -489,15 +634,10 @@ function animateProgressBar() {
     }, 200);
 }
 
-// Очищаем интервалы при закрытии модального окна
 document.getElementById('qrModal').addEventListener('hidden.bs.modal', function () {
-    if (qrCheckInterval) {
-        clearInterval(qrCheckInterval);
-        qrCheckInterval = null;
-    }
+    clearPairingTimers();
 });
 
-// Функции для управления статусом пользователей
 async function suspendUser(userId, username) {
     if (!confirm(`Вы уверены, что хотите приостановить пользователя "${username}"?\n\nПриостановленный пользователь не сможет получать дайджесты.`)) {
         return;
@@ -561,7 +701,6 @@ function showAlert(type, message) {
 
     document.body.appendChild(alertContainer);
 
-    // Автоматически скрыть через 5 секунд
     setTimeout(() => {
         if (alertContainer.parentNode) {
             alertContainer.remove();

@@ -101,6 +101,48 @@ class WhatsAppService:
             logger.error(f"Failed to initialize WhatsApp client: {e}")
             return False
 
+    async def request_pairing_code(self, user_id: int, phone: str) -> dict:
+        """Request a WhatsApp link-with-phone pairing code via the bridge."""
+        try:
+            if not await self.start_bridge_if_needed():
+                return {"success": False, "error": "WhatsApp bridge unavailable"}
+
+            logger.info(f"Requesting pairing code for user {user_id}")
+            response = await self.http_client.post(
+                f"{self.bridge_url}/pair-code/{user_id}",
+                json={"phone": phone},
+                timeout=60.0,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("code"):
+                    return data
+                return {
+                    "success": False,
+                    "error": data.get("error") or "Malformed pairing code response",
+                    "status_code": 502,
+                }
+
+            # Prefer structured bridge error body over raw text when present.
+            error_text = response.text
+            try:
+                err_body = response.json()
+                if isinstance(err_body, dict) and err_body.get("error"):
+                    error_text = str(err_body["error"])
+            except (ValueError, TypeError) as parse_err:
+                logger.debug(f"Pairing error body was not JSON: {parse_err}")
+
+            logger.error(f"Failed to request pairing code: {error_text}")
+            return {
+                "success": False,
+                "error": error_text,
+                "status_code": response.status_code,
+            }
+        except Exception as e:
+            logger.error(f"Failed to request pairing code: {e}")
+            return {"success": False, "error": str(e)}
+
     async def get_client_status(self, user_id: int) -> dict:
         """Get client status"""
         try:

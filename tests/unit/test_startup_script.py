@@ -99,6 +99,13 @@ class TestStartupScript:
         assert "BRIDGE_PID=$!" in content
         assert "API_PID=$!" in content
 
+    def test_bridge_logs_tee_keeps_node_pid(self, content):
+        """Process substitution keeps $! as node — unlike `node | tee`."""
+        assert "tee -a /app/logs/bridge.log" in content
+        assert "node bridge.js > >(tee -a /app/logs/bridge.log) 2>&1 &" in content
+        assert "node bridge.js > /app/logs/bridge.log 2>&1 &" not in content
+        assert "node bridge.js 2>&1 | tee" not in content
+
     def test_logging(self, content):
         assert "log() {" in content
         assert 'echo "[$(date' in content
