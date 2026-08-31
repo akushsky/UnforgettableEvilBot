@@ -1129,7 +1129,7 @@ async function generateImmediateDigest(userId) {
 
         const result = await response.json();
 
-        if (result.status === 'success') {
+        if (result.status === 'success' && result.outcome === 'sent') {
             showToast(result.message, 'success');
             button.innerHTML = '<i class="fas fa-check"></i> Дайджест отправлен!';
 
@@ -1138,6 +1138,10 @@ async function generateImmediateDigest(userId) {
                 button.disabled = false;
                 button.innerHTML = '<i class="fas fa-bolt"></i> Сформировать дайджест';
             }, 3000);
+        } else if (result.status === 'skipped' || result.outcome === 'skipped') {
+            showToast(result.message, 'warning');
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-bolt"></i> Сформировать дайджест';
         } else {
             showToast('Ошибка: ' + result.message, 'danger');
             button.disabled = false;

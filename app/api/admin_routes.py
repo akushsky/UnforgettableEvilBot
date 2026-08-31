@@ -338,10 +338,33 @@ async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db))
         from app.scheduler.digest_scheduler import DigestScheduler
 
         scheduler = DigestScheduler()
-        await scheduler.create_and_send_digest(user, db)
+        result = await scheduler.create_and_send_digest(user, db)
 
+        if result.outcome == "sent":
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "outcome": "sent",
+                    "message": result.reason or "Дайджест успешно создан и отправлен",
+                    "telegram_sent": result.telegram_sent,
+                    "whatsapp_sent": result.whatsapp_sent,
+                }
+            )
+        if result.outcome == "skipped":
+            return JSONResponse(
+                {
+                    "status": "skipped",
+                    "outcome": "skipped",
+                    "message": result.reason,
+                }
+            )
         return JSONResponse(
-            {"status": "success", "message": "Дайджест успешно создан и отправлен"}
+            status_code=400,
+            content={
+                "status": "error",
+                "outcome": "failed",
+                "message": result.reason,
+            },
         )
     except Exception as e:
         logger.error(f"Failed to generate digest for user {user_id}: {e}")
@@ -349,6 +372,7 @@ async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db))
             status_code=500,
             content={
                 "status": "error",
+                "outcome": "failed",
                 "message": f"Ошибка генерации дайджеста: {e!s}",
             },
         )

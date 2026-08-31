@@ -310,8 +310,9 @@ class TestDigestScheduler:
         mock_chat_repo.get_active_chats_for_user.return_value = []
         mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        result = await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
+        assert result.outcome == "skipped"
         # Should return early without creating digest
         mock_chat_repo.get_active_chats_for_user.assert_called_once_with(
             mock_db, mock_user.id
@@ -364,8 +365,10 @@ class TestDigestScheduler:
         mock_digest_repo = Mock()
         mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        result = await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
+        assert result.outcome == "sent"
+        assert result.telegram_sent is True
         mock_chat_repo.get_active_chats_for_user.assert_called_once_with(
             mock_db, mock_user.id
         )
@@ -405,8 +408,9 @@ class TestDigestScheduler:
             mock_message_repo
         )
 
-        await self.scheduler.create_and_send_digest(mock_user, mock_db)
+        result = await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
+        assert result.outcome == "skipped"
         # Should return early without creating digest
         mock_chat_repo.get_active_chats_for_user.assert_called_once_with(
             mock_db, mock_user.id
@@ -492,8 +496,9 @@ class TestDigestScheduler:
         with patch.object(
             self.scheduler, "_notify_admin_delivery_failure", new=AsyncMock()
         ) as mock_notify:
-            await self.scheduler.create_and_send_digest(mock_user, mock_db)
+            result = await self.scheduler.create_and_send_digest(mock_user, mock_db)
 
+        assert result.outcome == "failed"
         mock_message_repo.mark_as_processed.assert_not_called()
         mock_digest_repo.create.assert_called_once()
         logged = mock_digest_repo.create.call_args[0][1]
