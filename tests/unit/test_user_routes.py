@@ -147,6 +147,7 @@ def test_user_detail_page(mock_repo_factory, mock_can_generate, client):
     mock_user = Mock()
     mock_user.id = 1
     mock_user.username = "testuser"
+    mock_user.is_active = True
     mock_user.whatsapp_connected = False
     mock_user.telegram_channel_id = None
     mock_user.digest_preference = None
@@ -177,6 +178,53 @@ def test_user_detail_page(mock_repo_factory, mock_can_generate, client):
     assert response.status_code == 200
     assert "text/html" in response.headers.get("content-type", "")
     mock_user_repo.get_by_id_or_404.assert_called_once()
+    mock_can_generate.assert_called_once()
+    html = response.text
+    assert 'id="generate-digest-btn"' in html
+    assert "disabled" in html
+    assert "WhatsApp не подключен." in html
+
+
+@patch("app.api.user_routes.can_generate_immediate_digest", return_value=False)
+@patch("app.api.user_routes.repository_factory")
+def test_user_detail_suspended_shows_paused_reason(
+    mock_repo_factory, mock_can_generate, client
+):
+    """Suspended users should see the paused reason, not a missing-channel fallback."""
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.username = "paused"
+    mock_user.is_active = False
+    mock_user.whatsapp_connected = True
+    mock_user.telegram_channel_id = "-100123"
+    mock_user.digest_preference = None
+
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    mock_chat_repo = Mock()
+    mock_chat_repo.get_active_chats_for_user.return_value = []
+    mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
+
+    mock_digest_repo = Mock()
+    mock_digest_repo.get_last_digest_for_user.return_value = None
+    mock_digest_repo.get_digests_for_period.return_value = []
+    mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
+
+    mock_pref_repo = Mock()
+    mock_pref_repo.get_active_preferences.return_value = []
+    mock_repo_factory.get_digest_preference_repository.return_value = mock_pref_repo
+
+    mock_phone_repo = Mock()
+    mock_phone_repo.get_active_phones_for_user.return_value = []
+    mock_repo_factory.get_whatsapp_phone_repository.return_value = mock_phone_repo
+
+    response = client.get("/admin/users/1")
+
+    assert response.status_code == 200
+    assert "Пользователь приостановлен." in response.text
+    assert "Нет канала доставки дайджеста." not in response.text
 
 
 @patch("app.api.user_routes.repository_factory")
@@ -255,4 +303,3 @@ def test_resume_user_success(mock_repo_factory, client):
     data = response.json()
     assert data["status"] == "success"
     assert mock_user.is_active is True
-

@@ -401,17 +401,13 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
+  # Prometheus text exposition (started alongside the app on :9090)
   - job_name: 'whatsapp-digest'
     static_configs:
       - targets: ['localhost:9090']
     scrape_interval: 5s
     metrics_path: /metrics
-
-  - job_name: 'whatsapp-digest-app'
-    static_configs:
-      - targets: ['localhost:9876']
-    scrape_interval: 15s
-    metrics_path: /metrics
+  # Do not scrape :9876/metrics — that path is admin-auth JSON, not Prometheus text.
 ```
 
 ### 2. Logrotate Configuration

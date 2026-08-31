@@ -92,7 +92,9 @@ async def user_detail(user_id: int, request: Request, db: Session = Depends(get_
     )
     can_generate_digest = can_generate_immediate_digest(user, db)
     preference = getattr(user.digest_preference, "name", None)
-    if not user.whatsapp_connected:
+    if not user.is_active:
+        digest_block_reason = "Пользователь приостановлен."
+    elif not user.whatsapp_connected:
         digest_block_reason = "WhatsApp не подключен."
     elif preference == "whatsapp" and not whatsapp_phones:
         digest_block_reason = "Нет номеров WhatsApp для доставки."

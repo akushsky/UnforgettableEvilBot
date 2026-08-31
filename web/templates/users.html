@@ -380,27 +380,54 @@ function showError(message) {
 function startQRCodeCheck() {
     if (qrCheckInterval) clearInterval(qrCheckInterval);
 
+    let attempts = 0;
+    const maxAttempts = 30;
+
     qrCheckInterval = setInterval(async () => {
+        attempts++;
         try {
             const response = await fetch(`/admin/users/${currentUserId}/qr`);
+            if (!response.ok) {
+                clearInterval(qrCheckInterval);
+                showError('Ошибка получения QR-кода (HTTP ' + response.status + ')');
+                return;
+            }
             const result = await response.json();
 
             if (result.status === 'success' && result.qr_code) {
                 clearInterval(qrCheckInterval);
                 displayQRCode(result.qr_code, result.timestamp);
                 startQRCodeMonitoring();
+            } else if (result.status === 'error') {
+                clearInterval(qrCheckInterval);
+                showError(result.message || 'Ошибка получения QR-кода');
+            } else if (attempts >= maxAttempts) {
+                clearInterval(qrCheckInterval);
+                showError('Время ожидания QR-кода истекло. Попробуйте еще раз.');
             }
         } catch (error) {
             console.error('Error checking QR code:', error);
+            if (attempts >= maxAttempts) {
+                clearInterval(qrCheckInterval);
+                showError('Ошибка получения QR-кода: ' + error.message);
+            }
         }
     }, 2000);
 }
 
 function startQRCodeMonitoring() {
-    // Проверяем статус подключения каждые 5 секунд
+    let attempts = 0;
+    const maxAttempts = 36; // ~3 minutes at 5s
+
     const monitoringInterval = setInterval(async () => {
+        attempts++;
         try {
             const response = await fetch(`/admin/users/${currentUserId}/whatsapp/status`);
+            if (!response.ok) {
+                clearInterval(monitoringInterval);
+                showError('Ошибка проверки статуса WhatsApp (HTTP ' + response.status + ')');
+                return;
+            }
             const userData = await response.json();
 
             if (userData.whatsapp_connected === true || userData.bridge_connected === true) {
@@ -409,9 +436,16 @@ function startQRCodeMonitoring() {
                 setTimeout(() => {
                     location.reload();
                 }, 3000);
+            } else if (attempts >= maxAttempts) {
+                clearInterval(monitoringInterval);
+                showError('Время ожидания подключения WhatsApp истекло. Попробуйте еще раз.');
             }
         } catch (error) {
             console.error('Error monitoring connection:', error);
+            if (attempts >= maxAttempts) {
+                clearInterval(monitoringInterval);
+                showError('Ошибка проверки статуса: ' + error.message);
+            }
         }
     }, 5000);
 }

@@ -470,6 +470,22 @@ def test_generate_digest_rejected_without_delivery_channel(
     assert response.json()["status"] == "error"
 
 
+@patch("app.core.digest_delivery.repository_factory")
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_rejected_whatsapp_pref_despite_telegram(
+    mock_repo_factory, mock_delivery_repo_factory, client
+):
+    """WhatsApp preference with no phones must not fall back to Telegram."""
+    user = _digest_candidate(preference_name="whatsapp", telegram_channel_id="-100123")
+    _wire_digest_user(mock_repo_factory, user, phone_numbers=[])
+    _wire_digest_user(mock_delivery_repo_factory, user, phone_numbers=[])
+
+    response = client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+
+
 @patch("app.api.admin_routes.repository_factory")
 def test_get_digests(mock_repo_factory, client):
     """Test GET /admin/users/{user_id}/digests returns digest logs."""
