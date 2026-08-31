@@ -348,7 +348,12 @@ def test_get_whatsapp_status(mock_repo_factory, mock_httpx, client):
 
     mock_response = Mock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"connected": True}
+    mock_response.json.return_value = {
+        "connected": True,
+        "pairingStopped": False,
+        "pairingStopReason": None,
+        "awaitingPairing": False,
+    }
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
     mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -360,6 +365,144 @@ def test_get_whatsapp_status(mock_repo_factory, mock_httpx, client):
     data = response.json()
     assert "whatsapp_connected" in data
     assert "status" in data
+    assert data["pairing_stopped"] is False
+
+
+@patch("app.api.admin_routes.httpx")
+@patch("app.api.admin_routes.repository_factory")
+def test_get_whatsapp_status_forwards_pairing_stopped(
+    mock_repo_factory, mock_httpx, client
+):
+    """Budget exhaustion from the bridge must reach the admin UI."""
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.whatsapp_connected = False
+
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "connected": False,
+        "pairingStopped": True,
+        "pairingStopReason": "pairing budget exhausted (3)",
+        "awaitingPairing": True,
+    }
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    response = client.get("/admin/users/1/whatsapp/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["pairing_stopped"] is True
+    assert "budget exhausted" in data["pairing_stop_reason"]
+    assert data["awaiting_pairing"] is True
+
+
+def test_pair_code_requires_authentication():
+    """Pair-code must not run unauthenticated."""
+    with TestClient(app, follow_redirects=False) as unauthenticated_client:
+        response = unauthenticated_client.post(
+            "/admin/users/1/pair-code", json={"phone": "972501234567"}
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.repository_factory")
+def test_pair_code_missing_phone_returns_400(mock_repo_factory, mock_whatsapp, client):
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.whatsapp_connected = False
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    response = client.post("/admin/users/1/pair-code", json={"phone": "  "})
+
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+    mock_whatsapp.assert_not_called()
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.repository_factory")
+def test_pair_code_connected_user_returns_409(mock_repo_factory, mock_whatsapp, client):
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.whatsapp_connected = True
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    response = client.post("/admin/users/1/pair-code", json={"phone": "972501234567"})
+
+    assert response.status_code == 409
+    assert response.json()["status"] == "error"
+    mock_whatsapp.assert_not_called()
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.repository_factory")
+def test_pair_code_success(mock_repo_factory, mock_whatsapp, client):
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.whatsapp_connected = False
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    mock_svc = AsyncMock()
+    mock_svc.request_pairing_code = AsyncMock(
+        return_value={
+            "success": True,
+            "code": "12345678",
+            "phone": "972501234567",
+            "timestamp": "2026-08-31T00:00:00Z",
+        }
+    )
+    mock_whatsapp.return_value = mock_svc
+
+    response = client.post("/admin/users/1/pair-code", json={"phone": "972501234567"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["code"] == "12345678"
+    mock_svc.request_pairing_code.assert_awaited_once()
+
+
+@patch("app.api.admin_routes.get_whatsapp_service")
+@patch("app.api.admin_routes.repository_factory")
+def test_pair_code_bridge_400_maps_to_400(mock_repo_factory, mock_whatsapp, client):
+    mock_user = Mock()
+    mock_user.id = 1
+    mock_user.whatsapp_connected = False
+    mock_user_repo = Mock()
+    mock_user_repo.get_by_id_or_404.return_value = mock_user
+    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+
+    mock_svc = AsyncMock()
+    mock_svc.request_pairing_code = AsyncMock(
+        return_value={
+            "success": False,
+            "error": "phone is required (digits, min 8)",
+            "status_code": 400,
+        }
+    )
+    mock_whatsapp.return_value = mock_svc
+
+    response = client.post("/admin/users/1/pair-code", json={"phone": "12"})
+
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
 
 
 @patch("app.api.admin_routes.repository_factory")

@@ -434,8 +434,6 @@ function startLiveQRRefresh() {
                     qrShownAt = Date.now();
                     const banner = document.getElementById('qr-stale-banner');
                     if (banner) banner.classList.add('d-none');
-                } else if (img) {
-                    qrShownAt = Date.now();
                 }
             } else if (result.status === 'not_ready') {
                 const banner = document.getElementById('qr-stale-banner');
@@ -531,6 +529,12 @@ function startQRCodeMonitoring() {
                 return;
             }
             const userData = await response.json();
+
+            if (userData.pairing_stopped) {
+                clearPairingTimers();
+                showError(userData.pairing_stop_reason || 'Привязка остановлена. Начните заново.');
+                return;
+            }
 
             if (userData.whatsapp_connected === true || userData.bridge_connected === true) {
                 clearPairingTimers();

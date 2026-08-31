@@ -156,6 +156,65 @@ class TestWhatsAppService:
         assert result is False
         assert self.service.is_connected is False
 
+    @patch.object(WhatsAppService, "start_bridge_if_needed")
+    async def test_request_pairing_code_success(self, mock_start_bridge):
+        mock_start_bridge.return_value = True
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "code": "12345678",
+            "phone": "972501234567",
+        }
+        self.service.http_client.post = AsyncMock(return_value=mock_response)
+
+        result = await self.service.request_pairing_code(123, "972501234567")
+
+        assert result["success"] is True
+        assert result["code"] == "12345678"
+        self.service.http_client.post.assert_called_once_with(
+            f"{self.service.bridge_url}/pair-code/123",
+            json={"phone": "972501234567"},
+            timeout=60.0,
+        )
+
+    @patch.object(WhatsAppService, "start_bridge_if_needed")
+    async def test_request_pairing_code_bridge_unavailable(self, mock_start_bridge):
+        mock_start_bridge.return_value = False
+
+        result = await self.service.request_pairing_code(123, "972501234567")
+
+        assert result["success"] is False
+        assert "unavailable" in result["error"]
+
+    @patch.object(WhatsAppService, "start_bridge_if_needed")
+    async def test_request_pairing_code_http_error(self, mock_start_bridge):
+        mock_start_bridge.return_value = True
+        mock_response = Mock()
+        mock_response.status_code = 409
+        mock_response.text = '{"error":"already linked"}'
+        mock_response.json.return_value = {"error": "already linked", "success": False}
+        self.service.http_client.post = AsyncMock(return_value=mock_response)
+
+        result = await self.service.request_pairing_code(123, "972501234567")
+
+        assert result["success"] is False
+        assert result["status_code"] == 409
+        assert "already linked" in result["error"]
+
+    @patch.object(WhatsAppService, "start_bridge_if_needed")
+    async def test_request_pairing_code_malformed_200(self, mock_start_bridge):
+        mock_start_bridge.return_value = True
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True}
+        self.service.http_client.post = AsyncMock(return_value=mock_response)
+
+        result = await self.service.request_pairing_code(123, "972501234567")
+
+        assert result["success"] is False
+        assert result["status_code"] == 502
+
     async def test_get_client_status_success(self):
         """Test successful client status retrieval"""
         mock_response = Mock()

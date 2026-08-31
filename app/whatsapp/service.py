@@ -115,12 +115,28 @@ class WhatsAppService:
             )
 
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                if data.get("success") and data.get("code"):
+                    return data
+                return {
+                    "success": False,
+                    "error": data.get("error") or "Malformed pairing code response",
+                    "status_code": 502,
+                }
 
-            logger.error(f"Failed to request pairing code: {response.text}")
+            # Prefer structured bridge error body over raw text when present.
+            error_text = response.text
+            try:
+                err_body = response.json()
+                if isinstance(err_body, dict) and err_body.get("error"):
+                    error_text = str(err_body["error"])
+            except (ValueError, TypeError) as parse_err:
+                logger.debug(f"Pairing error body was not JSON: {parse_err}")
+
+            logger.error(f"Failed to request pairing code: {error_text}")
             return {
                 "success": False,
-                "error": response.text,
+                "error": error_text,
                 "status_code": response.status_code,
             }
         except Exception as e:

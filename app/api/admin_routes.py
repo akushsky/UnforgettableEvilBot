@@ -239,7 +239,7 @@ async def request_user_pairing_code(
     user_id: int, request: Request, db: Session = Depends(get_db)
 ):
     """Request a WhatsApp pairing code (link by phone number)."""
-    repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
+    user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
 
     try:
         body = await request.json()
@@ -248,6 +248,18 @@ async def request_user_pairing_code(
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "Укажите номер телефона"},
+            )
+
+        if user.whatsapp_connected:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "error",
+                    "message": (
+                        "WhatsApp уже подключен — сначала отключите сессию, "
+                        "затем запросите код привязки"
+                    ),
+                },
             )
 
         whatsapp_service = get_whatsapp_service()
@@ -264,8 +276,11 @@ async def request_user_pairing_code(
                 }
             )
 
+        status_code = int(result.get("status_code") or 500)
+        if status_code < 400 or status_code > 599:
+            status_code = 500
         return JSONResponse(
-            status_code=500,
+            status_code=status_code,
             content={
                 "status": "error",
                 "message": result.get("error") or "Не удалось получить код привязки",
@@ -290,6 +305,9 @@ async def get_user_whatsapp_status(user_id: int, db: Session = Depends(get_db)):
     try:
         db_status = user.whatsapp_connected
         bridge_connected = False
+        pairing_stopped = False
+        pairing_stop_reason = None
+        awaiting_pairing = False
 
         async with httpx.AsyncClient(timeout=5.0) as client:
             try:
@@ -299,6 +317,9 @@ async def get_user_whatsapp_status(user_id: int, db: Session = Depends(get_db)):
                 if bridge_response.status_code == 200:
                     bridge_data = bridge_response.json()
                     bridge_connected = bridge_data.get("connected", False)
+                    pairing_stopped = bool(bridge_data.get("pairingStopped", False))
+                    pairing_stop_reason = bridge_data.get("pairingStopReason")
+                    awaiting_pairing = bool(bridge_data.get("awaitingPairing", False))
             except Exception as e:
                 logger.warning(f"Bridge status check failed: {e}")
 
@@ -307,6 +328,9 @@ async def get_user_whatsapp_status(user_id: int, db: Session = Depends(get_db)):
                 "user_id": user_id,
                 "whatsapp_connected": db_status,
                 "bridge_connected": bridge_connected,
+                "pairing_stopped": pairing_stopped,
+                "pairing_stop_reason": pairing_stop_reason,
+                "awaiting_pairing": awaiting_pairing,
                 "status": (
                     "connected" if (db_status or bridge_connected) else "disconnected"
                 ),

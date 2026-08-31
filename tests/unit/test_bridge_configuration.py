@@ -383,10 +383,49 @@ class TestBridgeSourceInvariants:
 
         assert "if (preferExistingSession) {" in source
         assert "Wiping session for ${userId} - fresh pairing requested" in source
+        assert "hasRegisteredSession(userId)" in source
         assert (
             "const hasSession = preferExistingSession ? "
             "await this.checkSessionExists(userId) : false;" not in source
         )
+
+    def test_pairing_budget_and_registered_session_guards(self):
+        """Anti-abuse: no unpaired auto-reconnect; budget + hasRegisteredSession present."""
+        source = self.source()
+
+        assert "MAX_PAIRING_QR_SESSIONS" in source
+        assert "pairing budget exhausted" in source
+        assert "refusing new QR socket" in source
+        assert "async hasRegisteredSession(userId)" in source
+        assert "reconnect skipped ${userId}: no registered session" in source
+        assert "pairing close for ${userId}" in source
+        assert "Never log the code" in source or "Pairing code issued for" in source
+        assert (
+            "Pairing code for ${userId} (phone …${digits.slice(-4)}): ${code}"
+            not in source
+        )
+
+    def test_chats_route_uses_registered_session_not_folder(self):
+        """/chats must not auto-init from half-written QR folders."""
+        source = self.source()
+        chats_idx = source.index("this.app.get('/chats/:userId'")
+        next_route = source.index("this.app.get('/qr/:userId'", chats_idx)
+        chats = source[chats_idx:next_route]
+        assert "hasRegisteredSession(userId)" in chats
+        assert "checkSessionExists(userId)" not in chats
+
+    def test_init_dedupe_respects_prefer_existing_options(self):
+        """Conflicting preferExistingSession must not share one in-flight promise."""
+        source = self.source()
+        assert "this.initializingOptions" in source
+        assert "pendingOpts.preferExistingSession === preferExistingSession" in source
+
+    def test_env_int_clamps_nan_pairing_budget(self):
+        """Garbage MAX_PAIRING_QR_SESSIONS must not disable the cap via NaN."""
+        source = self.source()
+        assert "function envInt(" in source
+        assert "Number.isFinite(raw)" in source
+        assert "MAX_PAIRING_QR_SESSIONS = envInt(" in source
 
     def test_failed_wipe_aborts_initialization(self):
         """Reusing stale creds after a failed wipe emits no QR at all"""
