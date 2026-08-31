@@ -155,16 +155,10 @@ class UserSettings(Base):  # type: ignore[misc,valid-type]
 
     # Digest settings
     min_importance_level = Column(Integer, default=3)  # Minimum importance level
-    include_media_messages = Column(Boolean, default=True)
     max_message_age_hours = Column(Integer, default=24)  # Maximum message age
 
     # Notification settings
     urgent_notifications = Column(Boolean, default=True)  # Urgent notifications
-    daily_summary = Column(Boolean, default=True)  # Daily summary
-
-    # Auto-add chat settings
-    auto_add_new_chats = Column(Boolean, default=False)
-    auto_add_group_chats_only = Column(Boolean, default=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -190,44 +184,6 @@ class OpenAIMetrics(Base):  # type: ignore[misc,valid-type]
     # Timestamp
     request_time = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class ResourceSavings(Base):  # type: ignore[misc,valid-type]
-    """ResourceSavings class for tracking resource savings from suspended users."""
-
-    __tablename__ = "resource_savings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-
-    # Savings metrics
-    whatsapp_connections_saved = Column(
-        Integer, default=0
-    )  # Number of WhatsApp connections saved
-    messages_processed_saved = Column(
-        Integer, default=0
-    )  # Number of messages not processed
-    openai_requests_saved = Column(
-        Integer, default=0
-    )  # Number of OpenAI API calls saved
-    memory_mb_saved = Column(Float, default=0.0)  # Memory saved in MB
-    cpu_seconds_saved = Column(Float, default=0.0)  # CPU time saved in seconds
-
-    # Cost savings
-    openai_cost_saved_usd = Column(Float, default=0.0)  # OpenAI API cost saved in USD
-
-    # Time period
-    period_start = Column(DateTime, nullable=False)
-    period_end = Column(DateTime, nullable=False)
-
-    # Metadata
-    reason = Column(
-        String(100), nullable=False
-    )  # 'user_suspended', 'system_cleanup', etc.
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    # Relationships
-    user = relationship("User")
 
 
 class DigestPreference(Base):  # type: ignore[misc,valid-type]

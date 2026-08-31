@@ -333,15 +333,6 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    # Monitoring dashboard
-    location /monitoring/dashboard {
-        proxy_pass http://127.0.0.1:9876;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
     # Prometheus metrics (restrict access)
     location /metrics {
         allow 127.0.0.1;
@@ -444,12 +435,10 @@ Create `/etc/logrotate.d/whatsapp-digest`:
 ### 3. Alert Systems
 
 #### Setting up in the application:
-```python
-# Alerts are already configured in main.py
-# Check via: GET /monitoring/alerts
-
-# Manual health check:
-curl -X POST http://localhost:9876/monitoring/health-check
+```bash
+# Health and JSON metrics (admin auth required for /metrics)
+curl http://localhost:9876/health
+curl http://localhost:9876/metrics
 ```
 
 ---
@@ -542,9 +531,6 @@ curl http://localhost:9876/health
 
 # Metrics
 curl http://localhost:9876/metrics
-
-# Monitoring dashboard
-curl http://localhost:9876/monitoring/dashboard
 ```
 
 #### Common Issues:

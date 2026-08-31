@@ -53,7 +53,7 @@ async def main_dashboard(request: Request):
                 )
             ).fetchall()
             recent_digests = db.execute(text("""
-                    SELECT dl.id, dl.user_id, dl.message_count, dl.telegram_sent, dl.created_at, u.username
+                    SELECT dl.id, dl.user_id, dl.message_count, dl.telegram_sent, dl.whatsapp_sent, dl.created_at, u.username
                     FROM digest_logs dl
                     JOIN users u ON dl.user_id = u.id
                     ORDER BY dl.created_at DESC LIMIT 5
@@ -61,26 +61,6 @@ async def main_dashboard(request: Request):
 
         trace_manager.complete_span(span.span_id)
         trace_manager.complete_trace(trace_context.trace_id)
-
-        try:
-            from app.core.resource_savings import resource_savings_service
-
-            with get_db_session() as savings_db:
-                resource_savings = resource_savings_service.get_total_savings(
-                    savings_db, days_back=30
-                )
-        except Exception as e:
-            logger.error(f"Error getting resource savings: {e}")
-            resource_savings = {
-                "total_whatsapp_connections_saved": 0,
-                "total_messages_processed_saved": 0,
-                "total_openai_requests_saved": 0,
-                "total_memory_mb_saved": 0.0,
-                "total_cpu_seconds_saved": 0.0,
-                "total_openai_cost_saved_usd": 0.0,
-                "period_days": 30,
-                "records_count": 0,
-            }
 
         return templates.TemplateResponse(
             request,
@@ -92,7 +72,6 @@ async def main_dashboard(request: Request):
                     "monitored_chats": monitored_chats,
                     "messages_24h": messages_24h,
                     "digests_24h": digests_24h,
-                    "resource_savings": resource_savings,
                 },
                 "system_health": db_health,
                 "recent_users": recent_users,
@@ -107,18 +86,7 @@ async def main_dashboard(request: Request):
             "dashboard.html",
             context={
                 "error": str(e),
-                "stats": {
-                    "resource_savings": {
-                        "total_whatsapp_connections_saved": 0,
-                        "total_messages_processed_saved": 0,
-                        "total_openai_requests_saved": 0,
-                        "total_memory_mb_saved": 0.0,
-                        "total_cpu_seconds_saved": 0.0,
-                        "total_openai_cost_saved_usd": 0.0,
-                        "period_days": 30,
-                        "records_count": 0,
-                    }
-                },
+                "stats": {},
                 "system_health": {},
                 "recent_users": [],
                 "recent_digests": [],

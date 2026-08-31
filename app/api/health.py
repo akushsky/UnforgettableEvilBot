@@ -93,22 +93,12 @@ async def health_check():
         try:
             cache_stats = cache_manager.get_stats()
             redis_available = cache_stats.get("redis_available", False)
-            memory_hit_ratio = cache_stats.get("memory_hit_ratio", 0.0)
 
             checks["cache"] = {
                 "status": "healthy",
                 "redis_available": redis_available,
                 "memory_cache_size": cache_stats.get("memory_cache_size", 0),
-                "memory_hit_ratio": memory_hit_ratio,
-                "redis_hit_ratio": (
-                    cache_stats.get("redis_hit_ratio", 0.0) if redis_available else None
-                ),
             }
-
-            # Hit ratio is only meaningful once a shared Redis cache is attached;
-            # the in-process fallback cache is expected to miss.
-            if memory_hit_ratio < 0.5 and not settings.TESTING and redis_available:
-                errors.append(f"Low cache hit ratio: {memory_hit_ratio}")
 
         except Exception as e:
             checks["cache"] = {"status": "error", "error": str(e)}
@@ -283,26 +273,6 @@ async def health_check():
             errors.append(f"Application metrics check failed: {e!s}")
 
         try:
-            try:
-                from app.core.resource_savings import resource_savings_service
-
-                with get_db_session() as rs_db:
-                    resource_savings = resource_savings_service.get_total_savings(
-                        rs_db, days_back=30
-                    )
-            except Exception as e:
-                logger.warning(f"Error getting resource savings in health check: {e}")
-                resource_savings = {
-                    "total_whatsapp_connections_saved": 0,
-                    "total_messages_processed_saved": 0,
-                    "total_openai_requests_saved": 0,
-                    "total_memory_mb_saved": 0.0,
-                    "total_cpu_seconds_saved": 0.0,
-                    "total_openai_cost_saved_usd": 0.0,
-                    "period_days": 30,
-                    "records_count": 0,
-                }
-
             if hasattr(metrics_collector, "get_stats"):
                 metrics_data = metrics_collector.get_stats()
                 avg_response_time = metrics_data.get("avg_response_time", 0)
@@ -340,7 +310,6 @@ async def health_check():
             == "healthy",
             "telegram_available": external_services.get("telegram", {}).get("status")
             == "healthy",
-            "cache_hit_ratio": checks.get("cache", {}).get("memory_hit_ratio", 0),
             "redis_available": checks.get("cache", {}).get("redis_available", False),
         }
 

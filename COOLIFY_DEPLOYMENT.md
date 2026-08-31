@@ -109,7 +109,6 @@ The system is configured with optimized limits:
 ### **Built-in Monitoring**
 - Health check endpoint: `/health`
 - Metrics endpoint: `/metrics`
-- Monitoring dashboard: `/monitoring/dashboard`
 
 ### **Coolify Monitoring**
 - Resource usage (CPU, Memory, Disk)

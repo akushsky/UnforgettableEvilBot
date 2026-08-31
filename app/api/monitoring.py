@@ -1,22 +1,12 @@
 import time
-from datetime import UTC, datetime
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 from app.auth.admin_auth import get_admin_auth_dependency
-from app.core.alerts import (
-    alert_manager,
-    check_system_health,
-    clear_all_alerts,
-    get_system_alerts,
-)
-from app.core.alerts import (
-    clear_alerts_by_title as _clear_alerts_by_title,
-)
+from app.core.alerts import alert_manager, check_system_health
 from app.core.async_processor import task_processor
 from app.core.cache import cache_manager
 from app.core.metrics import metrics_collector
@@ -26,7 +16,6 @@ from app.database.connection import (
     get_db_session,
     get_db_stats,
     health_check_database,
-    optimize_database,
 )
 from app.dependencies import get_telegram_service
 from config.logging_config import get_logger
@@ -38,7 +27,6 @@ router = APIRouter(
     tags=["Monitoring"],
     dependencies=[Depends(get_admin_auth_dependency)],
 )
-templates = Jinja2Templates(directory="web/templates")
 
 process_start_time = psutil.Process().create_time()
 
@@ -118,19 +106,22 @@ async def get_metrics():
         metrics_cache_stats = (
             metrics_collector.get_cache_stats() if metrics_collector else {}
         )
-        memory_hit_ratio = metrics_cache_stats.get("memory_hit_ratio", 0.85)
+        # Only report hit ratios when the collector has real values — no fake defaults.
+        memory_hit_ratio = metrics_cache_stats.get("memory_hit_ratio")
         redis_hit_ratio = (
-            metrics_cache_stats.get("redis_hit_ratio", 0.0)
+            metrics_cache_stats.get("redis_hit_ratio")
             if settings.REDIS_ENABLED and cache_stats.get("redis_available")
-            else 0.0
+            else None
         )
 
         cache_performance = {
-            "memory_hit_ratio": memory_hit_ratio,
-            "redis_hit_ratio": redis_hit_ratio,
             "memory_cache_size": cache_stats.get("memory_cache_size", 0),
             "redis_available": cache_stats.get("redis_available", False),
         }
+        if memory_hit_ratio is not None:
+            cache_performance["memory_hit_ratio"] = memory_hit_ratio
+        if redis_hit_ratio is not None:
+            cache_performance["redis_hit_ratio"] = redis_hit_ratio
 
         try:
             metrics_data = (
@@ -138,40 +129,10 @@ async def get_metrics():
                 if hasattr(metrics_collector, "get_stats")
                 else {}
             )
-            avg_response_time = metrics_data.get("avg_response_time", 0.5)
+            avg_response_time = metrics_data.get("avg_response_time", 0.0)
         except Exception as e:
             logger.warning(f"Error collecting metrics stats: {e}")
-            avg_response_time = 0.5
-
-        try:
-            from app.core.resource_savings import resource_savings_service
-
-            with get_db_session() as rs_db:
-                resource_savings = resource_savings_service.get_total_savings(
-                    rs_db, days_back=30
-                )
-            current_system_savings = (
-                resource_savings_service.get_current_system_savings()
-            )
-        except Exception as e:
-            logger.error(f"Error getting resource savings metrics: {e}")
-            resource_savings = {
-                "total_whatsapp_connections_saved": 0,
-                "total_messages_processed_saved": 0,
-                "total_openai_requests_saved": 0,
-                "total_memory_mb_saved": 0.0,
-                "total_cpu_seconds_saved": 0.0,
-                "total_openai_cost_saved_usd": 0.0,
-                "period_days": 30,
-                "records_count": 0,
-            }
-            current_system_savings = {
-                "current_memory_usage_mb": 0.0,
-                "current_cpu_usage_percent": 0.0,
-                "estimated_memory_saved_mb": 0.0,
-                "estimated_cpu_saved_percent": 0.0,
-                "timestamp": datetime.now(UTC).isoformat(),
-            }
+            avg_response_time = 0.0
 
         openai_stats = openai_monitor.get_stats()
 
@@ -183,7 +144,6 @@ async def get_metrics():
             "openai_available": openai_stats.get("success_rate", 1.0) > 0.8
             and openai_stats.get("recent_errors", 0) < 5,
             "telegram_available": await check_telegram_availability(),
-            "cache_hit_ratio": memory_hit_ratio,
             "redis_available": cache_stats.get("redis_available", False),
         }
 
@@ -232,29 +192,6 @@ async def get_metrics():
                         psutil.Process().memory_info().rss / 1024 / 1024, 1
                     ),
                 },
-                "resource_savings": {
-                    "total_whatsapp_connections_saved": resource_savings.get(
-                        "total_whatsapp_connections_saved", 0
-                    ),
-                    "total_messages_processed_saved": resource_savings.get(
-                        "total_messages_processed_saved", 0
-                    ),
-                    "total_openai_requests_saved": resource_savings.get(
-                        "total_openai_requests_saved", 0
-                    ),
-                    "total_memory_mb_saved": resource_savings.get(
-                        "total_memory_mb_saved", 0.0
-                    ),
-                    "total_cpu_seconds_saved": resource_savings.get(
-                        "total_cpu_seconds_saved", 0.0
-                    ),
-                    "total_openai_cost_saved_usd": resource_savings.get(
-                        "total_openai_cost_saved_usd", 0.0
-                    ),
-                    "period_days": resource_savings.get("period_days", 30),
-                    "records_count": resource_savings.get("records_count", 0),
-                    "current_system": current_system_savings,
-                },
                 "components": {
                     "scheduler": (
                         "healthy" if scheduler and scheduler.is_running else "disabled"
@@ -280,169 +217,3 @@ async def get_metrics():
     except Exception as e:
         logger.error(f"Error getting metrics: {e}")
         raise HTTPException(status_code=500, detail="Error getting metrics") from e
-
-
-@router.get("/performance/optimize")
-async def optimize_performance():
-    """Endpoint for performance optimization"""
-    try:
-        optimize_database()
-        return {
-            "message": "Database optimization completed",
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-        }
-    except Exception as e:
-        logger.error(f"Error during performance optimization: {e}")
-        raise HTTPException(status_code=500, detail="Error during optimization") from e
-
-
-@router.get("/monitoring/traces")
-async def get_traces(limit: int = 10):
-    """Endpoint for getting traces"""
-    try:
-        traces = trace_manager.get_recent_traces(limit)
-        active_traces = len(trace_manager.active_traces)
-        total_traces = len(trace_manager.completed_traces) + active_traces
-        return {
-            "traces": traces,
-            "total_traces": total_traces,
-            "active_traces": active_traces,
-            "message": f"Retrieved {len(traces)} traces",
-        }
-    except Exception as e:
-        logger.error(f"Error getting traces: {e}")
-        raise HTTPException(status_code=500, detail="Error getting traces") from e
-
-
-@router.get("/monitoring/traces/{trace_id}")
-async def get_trace(trace_id: str):
-    """Endpoint for getting specific trace"""
-    try:
-        trace_data = trace_manager.get_trace_summary(trace_id)
-        if not trace_data:
-            raise HTTPException(status_code=404, detail="Trace not found")
-        return trace_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting trace {trace_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error getting trace") from e
-
-
-@router.get("/monitoring/traces/{trace_id}/export")
-async def export_trace(trace_id: str):
-    """Endpoint for exporting trace to JSON"""
-    try:
-        trace_json = trace_manager.export_trace(trace_id)
-        if not trace_json:
-            raise HTTPException(status_code=404, detail="Trace not found")
-        return Response(
-            content=trace_json,
-            media_type="application/json",
-            headers={
-                "Content-Disposition": f"attachment; filename=trace_{trace_id}.json"
-            },
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error exporting trace {trace_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error exporting trace") from e
-
-
-@router.get("/monitoring/alerts")
-async def get_alerts():
-    """Endpoint for getting system alerts"""
-    try:
-        return get_system_alerts()
-    except Exception as e:
-        logger.error(f"Error getting alerts: {e}")
-        raise HTTPException(status_code=500, detail="Error getting alerts") from e
-
-
-@router.get("/monitoring/openai")
-async def get_openai_stats():
-    """Get OpenAI usage statistics"""
-    try:
-        return {
-            "openai": openai_monitor.get_stats(),
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-        }
-    except Exception as e:
-        logger.error(f"Error getting OpenAI stats: {e}")
-        raise HTTPException(status_code=500, detail="Error getting OpenAI stats") from e
-
-
-@router.post("/monitoring/alerts/clear")
-async def clear_alerts():
-    """Clear all alerts"""
-    try:
-        clear_all_alerts()
-        return {"message": "All alerts cleared successfully"}
-    except Exception as e:
-        logger.error(f"Error clearing alerts: {e}")
-        raise HTTPException(status_code=500, detail="Error clearing alerts") from e
-
-
-@router.post("/monitoring/alerts/clear/{title_pattern}")
-async def clear_alerts_by_pattern(title_pattern: str):
-    """Clear alerts by title pattern"""
-    try:
-        _clear_alerts_by_title(title_pattern)
-        return {"message": f"Alerts matching '{title_pattern}' cleared successfully"}
-    except Exception as e:
-        logger.error(f"Error clearing alerts: {e}")
-        raise HTTPException(status_code=500, detail="Error clearing alerts") from e
-
-
-@router.post("/monitoring/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, user: str):
-    """Endpoint for acknowledging alert"""
-    try:
-        alert_manager.acknowledge_alert(alert_id, user)
-        return {"message": "Alert acknowledged successfully"}
-    except Exception as e:
-        logger.error(f"Error acknowledging alert {alert_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error acknowledging alert") from e
-
-
-@router.post("/monitoring/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: str):
-    """Endpoint for resolving alert"""
-    try:
-        alert_manager.resolve_alert(alert_id)
-        return {"message": "Alert resolved successfully"}
-    except Exception as e:
-        logger.error(f"Error resolving alert {alert_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error resolving alert") from e
-
-
-@router.post("/monitoring/health-check")
-async def trigger_health_check():
-    """Endpoint for triggering system health check"""
-    try:
-        system_data = {
-            "cpu_usage": 0.0,
-            "memory_usage": 0.0,
-            "avg_response_time": 0.5,
-            "db_errors": 0,
-            "openai_available": True,
-            "telegram_available": True,
-            "cache_hit_ratio": 0.8,
-            "redis_available": cache_manager.get_stats().get("redis_available", False),
-        }
-        new_alerts = check_system_health(system_data)
-        return {
-            "message": "Health check completed",
-            "new_alerts": len(new_alerts),
-            "system_data": system_data,
-        }
-    except Exception as e:
-        logger.error(f"Error during health check: {e}")
-        raise HTTPException(status_code=500, detail="Error during health check") from e
-
-
-@router.get("/monitoring/dashboard")
-async def monitoring_dashboard(request: Request):
-    """Monitoring dashboard"""
-    return templates.TemplateResponse(request, "monitoring_dashboard.html")

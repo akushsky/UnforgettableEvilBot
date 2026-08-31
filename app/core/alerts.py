@@ -199,22 +199,6 @@ class AlertManager:
             )
         )
 
-        # Rule for low cache hit ratio (only meaningful when Redis backs the cache)
-        self.add_rule(
-            AlertRule(
-                name="low_cache_hit_ratio",
-                condition=lambda data: (
-                    data.get("cache_hit_ratio", 1.0) < 0.5
-                    and data.get("redis_available", False)
-                ),
-                severity=AlertSeverity.WARNING,
-                title="Low Cache Hit Ratio",
-                message_template="Cache hit ratio is {cache_hit_ratio:.2f}",
-                cooldown_minutes=15,
-                tags=["cache", "performance"],
-            )
-        )
-
     def add_rule(self, rule: AlertRule):
         """Add alert rule"""
         self.rules[rule.name] = rule

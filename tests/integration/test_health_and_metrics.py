@@ -164,11 +164,10 @@ class TestHealthCheckEndpoint:
         assert "status" in cache_check
         assert "redis_available" in cache_check
         assert "memory_cache_size" in cache_check
-        assert "memory_hit_ratio" in cache_check
+        assert "memory_hit_ratio" not in cache_check
 
         assert isinstance(cache_check["redis_available"], bool)
         assert isinstance(cache_check["memory_cache_size"], int)
-        assert 0 <= cache_check["memory_hit_ratio"] <= 1
 
     def test_health_check_external_services(self, client):
         """Test external services health check."""
@@ -367,7 +366,6 @@ class TestMetricsEndpoint:
             "performance",
             "openai",
             "system",
-            "resource_savings",
             "components",
         ]
 
@@ -456,17 +454,17 @@ class TestMetricsEndpoint:
         data = response.json()
         cache_metrics = data["metrics"]["performance"]["cache"]
 
-        assert "memory_hit_ratio" in cache_metrics
-        assert "redis_hit_ratio" in cache_metrics
         assert "memory_cache_size" in cache_metrics
         assert "redis_available" in cache_metrics
-
-        assert isinstance(cache_metrics["memory_hit_ratio"], (int, float))
-        assert isinstance(cache_metrics["redis_hit_ratio"], (int, float))
         assert isinstance(cache_metrics["memory_cache_size"], int)
         assert isinstance(cache_metrics["redis_available"], bool)
-        assert 0 <= cache_metrics["memory_hit_ratio"] <= 1
-        assert 0 <= cache_metrics["redis_hit_ratio"] <= 1
+        # Hit ratios are only present when the collector reports real values
+        if "memory_hit_ratio" in cache_metrics:
+            assert isinstance(cache_metrics["memory_hit_ratio"], (int, float))
+            assert 0 <= cache_metrics["memory_hit_ratio"] <= 1
+        if "redis_hit_ratio" in cache_metrics:
+            assert isinstance(cache_metrics["redis_hit_ratio"], (int, float))
+            assert 0 <= cache_metrics["redis_hit_ratio"] <= 1
 
     def test_metrics_performance_database_subsection(self, client):
         """Test database performance metrics."""
@@ -540,34 +538,6 @@ class TestMetricsEndpoint:
         assert system_metrics["active_alerts"] >= 0
         assert system_metrics["uptime_seconds"] >= 0
         assert system_metrics["process_memory_mb"] >= 0
-
-    def test_metrics_resource_savings_section(self, client):
-        """Test resource savings metrics section."""
-        response = client.get("/metrics")
-        assert response.status_code == 200
-
-        data = response.json()
-        savings_metrics = data["metrics"]["resource_savings"]
-
-        expected_fields = [
-            "total_whatsapp_connections_saved",
-            "total_messages_processed_saved",
-            "total_openai_requests_saved",
-            "total_memory_mb_saved",
-            "total_cpu_seconds_saved",
-            "total_openai_cost_saved_usd",
-            "period_days",
-            "records_count",
-            "current_system",
-        ]
-
-        for field in expected_fields:
-            assert field in savings_metrics
-            if field != "current_system":
-                assert isinstance(savings_metrics[field], (int, float))
-                assert savings_metrics[field] >= 0
-            else:
-                assert isinstance(savings_metrics[field], dict)
 
     def test_metrics_components_section(self, client):
         """Test components metrics section."""

@@ -156,7 +156,6 @@ module = [
     "app.database.connection",
     "app.core.openai_monitoring",
     "app.core.repositories",
-    "app.core.resource_savings",
     "app.core.data_cleanup",
     "app.scheduler.digest_scheduler",
     "app.api.whatsapp_webhooks",

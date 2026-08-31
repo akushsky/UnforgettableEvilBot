@@ -15,7 +15,6 @@ from app.models.database import (
     DigestLog,
     MonitoredChat,
     OpenAIMetrics,
-    ResourceSavings,
     SystemLog,
     User,
     WhatsAppMessage,
@@ -72,7 +71,6 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
 
             # Delete all data in reverse dependency order
             session.query(OpenAIMetrics).delete()
-            session.query(ResourceSavings).delete()
             session.query(SystemLog).delete()
             session.query(DigestLog).delete()
             session.query(WhatsAppMessage).delete()
@@ -87,7 +85,6 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
             # Fallback cleanup if the above fails
             try:
                 session.query(OpenAIMetrics).delete()
-                session.query(ResourceSavings).delete()
                 session.query(SystemLog).delete()
                 session.query(DigestLog).delete()
                 session.query(WhatsAppMessage).delete()
@@ -239,31 +236,6 @@ def sample_system_logs(db_session) -> list[SystemLog]:
         db_session.refresh(log)
 
     return logs
-
-
-@pytest.fixture
-def sample_resource_savings(db_session, sample_user) -> list[ResourceSavings]:
-    """Create sample resource savings for testing."""
-    savings = []
-    for i in range(3):
-        saving = ResourceSavings(
-            user_id=sample_user.id,
-            period_start=datetime.utcnow() - timedelta(days=30),
-            period_end=datetime.utcnow(),
-            messages_processed_saved=i * 10,
-            memory_mb_saved=i * 5.5,
-            reason="test_savings",
-            created_at=datetime.utcnow() - timedelta(days=i),
-        )
-        savings.append(saving)
-
-    db_session.add_all(savings)
-    db_session.commit()
-
-    for saving in savings:
-        db_session.refresh(saving)
-
-    return savings
 
 
 @pytest.fixture

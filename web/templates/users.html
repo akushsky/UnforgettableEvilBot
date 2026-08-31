@@ -400,10 +400,10 @@ function startQRCodeMonitoring() {
     // Проверяем статус подключения каждые 5 секунд
     const monitoringInterval = setInterval(async () => {
         try {
-            const response = await fetch(`/admin/users/${currentUserId}`);
+            const response = await fetch(`/admin/users/${currentUserId}/whatsapp/status`);
             const userData = await response.json();
 
-            if (userData.whatsapp_connected) {
+            if (userData.whatsapp_connected === true || userData.bridge_connected === true) {
                 clearInterval(monitoringInterval);
                 showConnectionSuccess();
                 setTimeout(() => {

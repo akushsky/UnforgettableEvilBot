@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.auth.admin_auth import get_admin_auth_dependency
 from app.auth.security import get_password_hash
+from app.core.digest_delivery import can_generate_immediate_digest
 from app.core.repository_factory import repository_factory
 from app.database.connection import get_db
-from app.dependencies import get_telegram_service
-from app.models.database import User, UserSettings
+from app.models.database import User
 from config.logging_config import get_logger
 from config.settings import settings
 
@@ -90,6 +90,16 @@ async def user_detail(user_id: int, request: Request, db: Session = Depends(get_
             db, user_id
         )
     )
+    can_generate_digest = can_generate_immediate_digest(user, db)
+    preference = getattr(user.digest_preference, "name", None)
+    if not user.whatsapp_connected:
+        digest_block_reason = "WhatsApp не подключен."
+    elif preference == "whatsapp" and not whatsapp_phones:
+        digest_block_reason = "Нет номеров WhatsApp для доставки."
+    elif not user.telegram_channel_id and preference != "whatsapp":
+        digest_block_reason = "Telegram канал не настроен."
+    else:
+        digest_block_reason = None
 
     return templates.TemplateResponse(
         request,
@@ -102,6 +112,8 @@ async def user_detail(user_id: int, request: Request, db: Session = Depends(get_
             "successful_digests": successful_digests,
             "digest_preferences": digest_preferences,
             "whatsapp_phones": whatsapp_phones,
+            "can_generate_digest": can_generate_digest,
+            "digest_block_reason": digest_block_reason,
         },
     )
 
@@ -151,70 +163,6 @@ async def update_user_settings(
     return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
 
 
-@router.post("/users/{user_id}/settings/create")
-async def create_user_settings(user_id: int, db: Session = Depends(get_db)):
-    """Create default settings for user if they don't exist"""
-    try:
-        user = repository_factory.get_user_repository().get_by_id(db, user_id)
-        if not user:
-            return JSONResponse(
-                status_code=404,
-                content={"status": "error", "message": "User not found"},
-            )
-
-        existing_settings = (
-            repository_factory.get_user_settings_repository().get_by_user_id(
-                db, user_id
-            )
-        )
-
-        if existing_settings:
-            return JSONResponse(
-                content={
-                    "status": "info",
-                    "message": "User settings already exist",
-                    "settings": {
-                        "max_message_age_hours": existing_settings.max_message_age_hours,
-                        "min_importance_level": existing_settings.min_importance_level,
-                    },
-                }
-            )
-
-        default_settings = UserSettings(
-            user_id=user_id,
-            max_message_age_hours=24,
-            min_importance_level=3,
-            include_media_messages=True,
-            urgent_notifications=True,
-            daily_summary=True,
-            auto_add_new_chats=False,
-            auto_add_group_chats_only=True,
-        )
-        db.add(default_settings)
-        db.commit()
-
-        return JSONResponse(
-            content={
-                "status": "success",
-                "message": "Default user settings created",
-                "settings": {
-                    "max_message_age_hours": default_settings.max_message_age_hours,
-                    "min_importance_level": default_settings.min_importance_level,
-                },
-            }
-        )
-
-    except Exception as e:
-        db.rollback()
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "message": f"Error creating user settings: {e!s}",
-            },
-        )
-
-
 @router.post("/users/{user_id}/suspend")
 async def suspend_user_web(user_id: int, db: Session = Depends(get_db)):
     """Suspend a user via web interface"""
@@ -248,21 +196,6 @@ async def suspend_user_web(user_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(
             f"Error disconnecting WhatsApp bridge for suspended user {user_id}: {e}"
-        )
-
-    try:
-        from app.core.resource_savings import resource_savings_service
-
-        savings_result = resource_savings_service.record_suspension_savings(
-            db, user_id, user.updated_at
-        )
-        if "error" not in savings_result:
-            logger.info(
-                f"Resource savings recorded for suspended user {user_id}: {savings_result}"
-            )
-    except Exception as e:
-        logger.error(
-            f"Error recording resource savings for suspended user {user_id}: {e}"
         )
 
     return JSONResponse(
@@ -310,113 +243,3 @@ async def resume_user_web(user_id: int, db: Session = Depends(get_db)):
             "message": f"User {user.username} has been resumed successfully",
         }
     )
-
-
-@router.post("/users/{user_id}/telegram/test")
-async def test_telegram_connection(user_id: int, db: Session = Depends(get_db)):
-    """Test connection to the user's Telegram channel"""
-    user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-
-    if not user.is_active:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Пользователь приостановлен"},
-        )
-    if not user.telegram_channel_id:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Telegram канал не настроен"},
-        )
-
-    try:
-        telegram_service = get_telegram_service()
-        verification = await telegram_service.verify_channel_access(
-            user.telegram_channel_id
-        )
-
-        if verification["success"]:
-            test_success = await telegram_service.test_connection(
-                user.telegram_channel_id
-            )
-            return JSONResponse(
-                {
-                    "status": "success" if test_success else "warning",
-                    "message": (
-                        "Тестовое сообщение отправлено"
-                        if test_success
-                        else "Доступ есть, но отправка не удалась"
-                    ),
-                    "channel_info": verification["chat_info"],
-                    "permissions": verification["bot_permissions"],
-                }
-            )
-        else:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": "error",
-                    "message": f"Нет доступа к каналу: {verification['error']}",
-                    "suggestions": verification.get("suggestions", []),
-                },
-            )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": f"Ошибка тестирования: {e!s}"},
-        )
-
-
-@router.get("/users/{user_id}/telegram/setup-guide")
-async def get_telegram_setup_guide(user_id: int, db: Session = Depends(get_db)):
-    """Get instructions for setting up a Telegram channel"""
-    user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-    try:
-        telegram_service = get_telegram_service()
-        guide = await telegram_service.create_channel_for_user(user.username)
-        return JSONResponse(
-            {
-                "status": "success",
-                "user": user.username,
-                "setup_guide": guide["instructions"],
-                "bot_username": guide["bot_username"],
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "message": f"Ошибка получения инструкций: {e!s}",
-            },
-        )
-
-
-@router.get("/users/{user_id}/telegram/stats")
-async def get_telegram_channel_stats(user_id: int, db: Session = Depends(get_db)):
-    """Get statistics of the user's Telegram channel"""
-    user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-
-    if not user.telegram_channel_id:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Telegram канал не настроен"},
-        )
-
-    try:
-        telegram_service = get_telegram_service()
-        stats = await telegram_service.get_channel_statistics(user.telegram_channel_id)
-        return JSONResponse(
-            {
-                "status": "success" if stats["success"] else "error",
-                "statistics": stats.get("statistics"),
-                "error": stats.get("error"),
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "message": f"Ошибка получения статистики: {e!s}",
-            },
-        )

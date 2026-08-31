@@ -11,7 +11,6 @@ from app.models.database import (
     DigestPreference,
     MonitoredChat,
     OpenAIMetrics,
-    ResourceSavings,
     SystemLog,
     User,
     UserSettings,
@@ -444,41 +443,6 @@ class UserSettingsRepository(BaseRepository):
         return db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
 
 
-class ResourceSavingsRepository(BaseRepository):
-    """Repository for working with resource savings"""
-
-    def __init__(self):
-        """Init  ."""
-        super().__init__(ResourceSavings)
-
-    def get_savings_in_period(
-        self, db: Session, period_start: datetime, period_end: datetime
-    ) -> list[ResourceSavings]:
-        """Get savings records in a period"""
-        return (
-            db.query(ResourceSavings)
-            .filter(
-                ResourceSavings.period_start >= period_start,
-                ResourceSavings.period_end <= period_end,
-            )
-            .all()
-        )
-
-    def get_savings_by_user_in_period(
-        self, db: Session, user_id: int, period_start: datetime
-    ) -> list[ResourceSavings]:
-        """Get savings history for a specific user in a period"""
-        return (
-            db.query(ResourceSavings)
-            .filter(
-                ResourceSavings.user_id == user_id,
-                ResourceSavings.created_at >= period_start,
-            )
-            .order_by(desc(ResourceSavings.created_at))
-            .all()
-        )
-
-
 class OpenAIMetricsRepository(BaseRepository):
     """Repository for working with OpenAI metrics"""
 
@@ -570,7 +534,6 @@ whatsapp_message_repository = WhatsAppMessageRepository()
 digest_log_repository = DigestLogRepository()
 system_log_repository = SystemLogRepository()
 user_settings_repository = UserSettingsRepository()
-resource_savings_repository = ResourceSavingsRepository()
 openai_metrics_repository = OpenAIMetricsRepository()
 digest_preference_repository = DigestPreferenceRepository()
 whatsapp_phone_repository = WhatsAppPhoneRepository()

@@ -63,7 +63,6 @@ def unauthenticated_client(mock_db):
         ("post", "/admin/users/create"),
         ("post", "/admin/users/1/suspend"),
         ("post", "/admin/users/1/resume"),
-        ("post", "/admin/users/1/telegram/test"),
     ],
 )
 def test_admin_routes_require_authentication(method, path, unauthenticated_client):
@@ -74,9 +73,8 @@ def test_admin_routes_require_authentication(method, path, unauthenticated_clien
     assert response.headers["location"] == "/admin/login"
 
 
-@patch("app.api.user_routes.get_telegram_service")
 @patch("app.api.user_routes.repository_factory")
-def test_users_page_returns_html(mock_repo_factory, mock_telegram, client):
+def test_users_page_returns_html(mock_repo_factory, client):
     """Test GET /admin/users returns HTML user list page."""
     mock_user_repo = Mock()
     mock_user_repo.get_all.return_value = []
@@ -142,12 +140,16 @@ def test_create_user_duplicate_returns_400(mock_repo_factory, client, mock_db):
     mock_user_repo.get_by_username.assert_called_once()
 
 
+@patch("app.api.user_routes.can_generate_immediate_digest", return_value=False)
 @patch("app.api.user_routes.repository_factory")
-def test_user_detail_page(mock_repo_factory, client):
+def test_user_detail_page(mock_repo_factory, mock_can_generate, client):
     """Test GET /admin/users/{user_id} returns user detail page."""
     mock_user = Mock()
     mock_user.id = 1
     mock_user.username = "testuser"
+    mock_user.whatsapp_connected = False
+    mock_user.telegram_channel_id = None
+    mock_user.digest_preference = None
 
     mock_user_repo = Mock()
     mock_user_repo.get_by_id_or_404.return_value = mock_user
@@ -216,11 +218,7 @@ def test_suspend_user_success(mock_repo_factory, client):
         )
         mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with patch(
-            "app.core.resource_savings.resource_savings_service",
-            Mock(record_suspension_savings=Mock(return_value={})),
-        ):
-            response = client.post("/admin/users/1/suspend")
+        response = client.post("/admin/users/1/suspend")
 
     assert response.status_code == 200
     data = response.json()
@@ -258,82 +256,3 @@ def test_resume_user_success(mock_repo_factory, client):
     assert data["status"] == "success"
     assert mock_user.is_active is True
 
-
-@patch("app.api.user_routes.get_telegram_service")
-@patch("app.api.user_routes.repository_factory")
-def test_test_telegram_connection_success(mock_repo_factory, mock_telegram, client):
-    """Test POST /admin/users/{user_id}/telegram/test succeeds when connection works."""
-    mock_user = Mock()
-    mock_user.id = 1
-    mock_user.is_active = True
-    mock_user.telegram_channel_id = "-100123456"
-
-    mock_user_repo = Mock()
-    mock_user_repo.get_by_id_or_404.return_value = mock_user
-    mock_repo_factory.get_user_repository.return_value = mock_user_repo
-
-    mock_telegram_svc = AsyncMock()
-    mock_telegram_svc.verify_channel_access = AsyncMock(
-        return_value={
-            "success": True,
-            "chat_info": {"title": "Test"},
-            "bot_permissions": {},
-        }
-    )
-    mock_telegram_svc.test_connection = AsyncMock(return_value=True)
-    mock_telegram.return_value = mock_telegram_svc
-
-    response = client.post("/admin/users/1/telegram/test")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert "channel_info" in data
-
-
-@patch("app.api.user_routes.get_telegram_service")
-@patch("app.api.user_routes.repository_factory")
-def test_test_telegram_connection_failure(mock_repo_factory, mock_telegram, client):
-    """Test POST /admin/users/{user_id}/telegram/test returns error on failure."""
-    mock_user = Mock()
-    mock_user.id = 1
-    mock_user.is_active = True
-    mock_user.telegram_channel_id = "-100123456"
-
-    mock_user_repo = Mock()
-    mock_user_repo.get_by_id_or_404.return_value = mock_user
-    mock_repo_factory.get_user_repository.return_value = mock_user_repo
-
-    mock_telegram_svc = AsyncMock()
-    mock_telegram_svc.verify_channel_access = AsyncMock(
-        return_value={"success": False, "error": "No access", "suggestions": []}
-    )
-    mock_telegram.return_value = mock_telegram_svc
-
-    response = client.post("/admin/users/1/telegram/test")
-
-    assert response.status_code == 400
-    data = response.json()
-    assert data["status"] == "error"
-
-
-@patch("app.api.user_routes.repository_factory")
-def test_create_user_settings(mock_repo_factory, client):
-    """Test POST /admin/users/{user_id}/settings/create creates default settings."""
-    mock_user = Mock()
-    mock_user.id = 1
-
-    mock_user_repo = Mock()
-    mock_user_repo.get_by_id.return_value = mock_user
-    mock_repo_factory.get_user_repository.return_value = mock_user_repo
-
-    mock_settings_repo = Mock()
-    mock_settings_repo.get_by_user_id.return_value = None
-    mock_repo_factory.get_user_settings_repository.return_value = mock_settings_repo
-
-    response = client.post("/admin/users/1/settings/create")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert "settings" in data
