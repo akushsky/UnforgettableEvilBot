@@ -234,6 +234,54 @@ async def check_qr_code(user_id: int):
         return JSONResponse({"status": "error", "message": str(e)})
 
 
+@router.post("/users/{user_id}/pair-code")
+async def request_user_pairing_code(
+    user_id: int, request: Request, db: Session = Depends(get_db)
+):
+    """Request a WhatsApp pairing code (link by phone number)."""
+    repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
+
+    try:
+        body = await request.json()
+        phone = str(body.get("phone") or "").strip()
+        if not phone:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Укажите номер телефона"},
+            )
+
+        whatsapp_service = get_whatsapp_service()
+        result = await whatsapp_service.request_pairing_code(user_id, phone)
+
+        if result.get("success") and result.get("code"):
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "code": result["code"],
+                    "phone": result.get("phone"),
+                    "timestamp": result.get("timestamp"),
+                    "message": "Код привязки готов — введите его в WhatsApp",
+                }
+            )
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": result.get("error") or "Не удалось получить код привязки",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Pairing code error for user {user_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Ошибка получения кода привязки: {e!s}",
+            },
+        )
+
+
 @router.get("/users/{user_id}/whatsapp/status")
 async def get_user_whatsapp_status(user_id: int, db: Session = Depends(get_db)):
     """Get WhatsApp connection status for a specific user"""

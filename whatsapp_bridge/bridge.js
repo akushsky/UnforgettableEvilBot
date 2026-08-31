@@ -26,8 +26,19 @@ const RESTORE_ON_START = !['0', 'false', 'no', 'off'].includes(
 );
 const MESSAGE_POST_ATTEMPTS = parseInt(process.env.MESSAGE_POST_ATTEMPTS || '3', 10);
 const MESSAGE_POST_BACKOFF_MS = parseInt(process.env.MESSAGE_POST_BACKOFF_MS || '1000', 10);
+// Cap unauthenticated QR/pairing sockets so WhatsApp anti-abuse does not throttle the phone.
+const MAX_PAIRING_QR_SESSIONS = parseInt(process.env.MAX_PAIRING_QR_SESSIONS || '3', 10);
+const RECONNECT_BASE_MS = parseInt(process.env.RECONNECT_BASE_MS || '30000', 10);
+const RECONNECT_MAX_MS = parseInt(process.env.RECONNECT_MAX_MS || String(10 * 60 * 1000), 10);
+// Real Chrome identity — custom "WhatsApp Bridge" strings stand out in WA anti-abuse.
+const BAILEYS_BROWSER = ['Chrome (Linux)', 'Chrome', '124.0.0.0'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Digits-only E.164 without leading +. */
+function normalizePhoneNumber(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
 
 /** Text carried by a message, including media captions. */
 function extractMessageContent(message) {
@@ -51,7 +62,10 @@ class BaileysWhatsAppBridge {
     this.clients = new Map();           // userId -> WASocket
     this.clientStates = new Map();      // userId -> state info
     this.qrCodes = new Map();           // userId -> qr string
+    this.pairingCodes = new Map();      // userId -> { code, phone, timestamp }
     this.reconnectTimeouts = new Map(); // userId -> timeout
+    this.reconnectAttempts = new Map(); // userId -> consecutive session reconnect count
+    this.pairingQrSessions = new Map(); // userId -> QR/pairing sockets opened since last explicit start
     this.initializing = new Map();      // userId -> Promise
     this.restorePromise = null;         // de-dupe restore-all
     this.restoreScheduled = false;
@@ -141,12 +155,36 @@ class BaileysWhatsAppBridge {
     this.app.post('/initialize/:userId', async (req, res) => {
       try {
         const userId = req.params.userId;
+        // Explicit admin/API pairing start: allow a fresh budget of QR sockets.
+        this.resetPairingBudget(userId);
         const result = await this.initializeClientWithReconnect(userId, { preferExistingSession: true });
         res.json(result);
       } catch (error) {
         console.error(`Error initializing client ${req.params.userId}:`, error);
         res.status(500).json({ error: error.message });
       }
+    });
+
+    this.app.post('/pair-code/:userId', async (req, res) => {
+      try {
+        const userId = req.params.userId;
+        const phone = normalizePhoneNumber(req.body?.phone);
+        if (!phone || phone.length < 8) {
+          return res.status(400).json({ error: 'phone is required (E.164 digits, min 8)' });
+        }
+        this.resetPairingBudget(userId);
+        const result = await this.requestPairingCode(userId, phone);
+        res.json(result);
+      } catch (error) {
+        console.error(`Error requesting pairing code for ${req.params.userId}:`, error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/pair-code/:userId', async (req, res) => {
+      const stored = this.pairingCodes.get(req.params.userId);
+      if (!stored) return res.status(404).json({ error: 'Pairing code not available' });
+      res.json({ success: true, ...stored });
     });
 
     this.app.post('/cleanup/:userId', async (req, res) => {
@@ -238,6 +276,7 @@ class BaileysWhatsAppBridge {
       try {
         const userId = req.params.userId;
         const reason = req.body?.reason || 'admin_request';
+        this.resetPairingBudget(userId);
         const result = await this.reconnectUser(userId, reason);
 
         if (result.success) {
@@ -253,11 +292,11 @@ class BaileysWhatsAppBridge {
 
     this.app.get('/status/:userId', async (req, res) => {
       const userId = req.params.userId;
-      const hasSession = await this.checkSessionExists(userId);
+      const hasSession = await this.hasRegisteredSession(userId);
       let client = this.clients.get(userId);
 
       if (!client && hasSession && !this.initializing.has(userId)) {
-        // lazy-kick start (non-blocking)
+        // lazy-kick start (non-blocking) — only for completed pairings
         this.initializeClientWithReconnect(userId, { preferExistingSession: true })
           .catch((e) => console.error(`Lazy init failed for ${userId}:`, e));
       }
@@ -280,6 +319,10 @@ class BaileysWhatsAppBridge {
         hasSession,
         initializing: this.initializing.has(userId),
         sessionPath: this.sessionFolderFor(userId),
+        awaitingPairing: !!snap.awaitingPairing,
+        pairingStopped: !!snap.pairingStopped,
+        disconnectStatusCode: snap.disconnectStatusCode || null,
+        disconnectReason: snap.disconnectReason || null,
       });
     });
 
@@ -342,6 +385,90 @@ class BaileysWhatsAppBridge {
 
   chatCacheFileFor(userId) {
     return path.join(this.sessionFolderFor(userId), 'chats.json');
+  }
+
+  /** Reset QR/pairing attempt budget after an explicit admin pairing request. */
+  resetPairingBudget(userId) {
+    this.pairingQrSessions.set(userId, 0);
+    this.reconnectAttempts.delete(userId);
+    this.updateClientState(userId, {
+      awaitingPairing: false,
+      pairingStopped: false,
+      pairingStopReason: null,
+    });
+  }
+
+  /**
+   * True only when Baileys creds show a completed phone pairing (registered + me).
+   * An empty or half-written session folder from a QR attempt must not count.
+   */
+  async hasRegisteredSession(userId) {
+    try {
+      const credsPath = path.join(this.sessionFolderFor(userId), 'creds.json');
+      const raw = await fs.readFile(credsPath, 'utf8');
+      const creds = JSON.parse(raw);
+      return !!(creds && creds.registered && creds.me);
+    } catch {
+      return false;
+    }
+  }
+
+  reconnectDelayMs(userId) {
+    const attempt = this.reconnectAttempts.get(userId) || 0;
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, attempt));
+    return delay;
+  }
+
+  scheduleSessionReconnect(userId) {
+    const old = this.reconnectTimeouts.get(userId);
+    if (old) clearTimeout(old);
+    const delay = this.reconnectDelayMs(userId);
+    const attempt = (this.reconnectAttempts.get(userId) || 0) + 1;
+    this.reconnectAttempts.set(userId, attempt);
+    console.log(`schedule reconnect ${userId} in ${delay}ms (attempt ${attempt})`);
+    const t = setTimeout(() => this.attemptReconnect(userId), delay);
+    this.reconnectTimeouts.set(userId, t);
+  }
+
+  /**
+   * Start a fresh Baileys socket and request a phone pairing code
+   * (WhatsApp "Link with phone number" flow).
+   */
+  async requestPairingCode(userId, phone) {
+    const digits = normalizePhoneNumber(phone);
+    if (!digits || digits.length < 8) {
+      throw new Error('Invalid phone number');
+    }
+
+    // Fresh session required — registered creds would skip pairing.
+    // initializeClientWithReconnect owns the pairing-budget counter.
+    const initResult = await this.initializeClientWithReconnect(userId, { preferExistingSession: false });
+    if (initResult?.pairingStopped) {
+      throw new Error(initResult.message || 'Pairing stopped');
+    }
+
+    const client = this.clients.get(userId);
+    if (!client || typeof client.requestPairingCode !== 'function') {
+      throw new Error('Baileys client does not support requestPairingCode');
+    }
+
+    // Give the socket a moment to open the websocket before requesting the code.
+    await sleep(1500);
+    const code = await client.requestPairingCode(digits);
+    const payload = {
+      code,
+      phone: digits,
+      timestamp: new Date().toISOString(),
+      userId,
+    };
+    this.pairingCodes.set(userId, payload);
+    this.updateClientState(userId, {
+      awaitingPairing: true,
+      pairingStopped: false,
+      pairingMethod: 'phone',
+    });
+    console.log(`Pairing code for ${userId} (phone …${digits.slice(-4)}): ${code}`);
+    return { success: true, ...payload };
   }
 
   async listLocalSessionUserIds() {
@@ -474,7 +601,11 @@ class BaileysWhatsAppBridge {
 
       let hasSession = false;
       if (preferExistingSession) {
-        hasSession = await this.checkSessionExists(userId);
+        hasSession = await this.hasRegisteredSession(userId);
+        if (!hasSession) {
+          // Folder may exist from a previous unfinished QR attempt — not a real session.
+          hasSession = false;
+        }
       } else {
         // A fresh pairing was requested: the old credentials must go, otherwise
         // useMultiFileAuthState reuses them and no QR is ever emitted.
@@ -489,7 +620,34 @@ class BaileysWhatsAppBridge {
         }
         this.persistentChats.delete(userId);
         this.qrCodes.delete(userId);
+        this.pairingCodes.delete(userId);
       }
+
+      // Unauthenticated init burns a pairing attempt. Cap them so WhatsApp
+      // does not throttle the phone account for "link new device" spam.
+      if (!hasSession) {
+        const used = this.pairingQrSessions.get(userId) || 0;
+        if (used >= MAX_PAIRING_QR_SESSIONS) {
+          console.warn(
+            `[init] pairing budget exhausted for ${userId} (${used}/${MAX_PAIRING_QR_SESSIONS}) - refusing new QR socket`
+          );
+          this.updateClientState(userId, {
+            awaitingPairing: true,
+            pairingStopped: true,
+            pairingStopReason: `pairing budget exhausted (${MAX_PAIRING_QR_SESSIONS})`,
+            connected: false,
+          });
+          return {
+            message: 'Pairing stopped - too many QR sessions without successful link',
+            userId,
+            hasSession: false,
+            pairingStopped: true,
+          };
+        }
+        this.pairingQrSessions.set(userId, used + 1);
+        console.log(`[init] pairing socket ${used + 1}/${MAX_PAIRING_QR_SESSIONS} for ${userId}`);
+      }
+
       console.log(`Initializing Baileys client for ${userId} (hasSession=${hasSession})`);
 
       let lastError = null;
@@ -510,7 +668,7 @@ class BaileysWhatsAppBridge {
               creds: state.creds,
               keys: B.makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
             },
-            browser: ['WhatsApp Bridge', 'Chrome', '1.0.0'],
+            browser: BAILEYS_BROWSER,
             connectTimeoutMs: INIT_TIMEOUT_MS,
             defaultQueryTimeoutMs: 60000,
             emitOwnEvents: false,
@@ -527,6 +685,8 @@ class BaileysWhatsAppBridge {
             hasSession,
             lastInitialized: new Date().toISOString(),
             connected: false,
+            awaitingPairing: !hasSession,
+            pairingStopped: false,
           });
 
           // Wait for connection or QR
@@ -620,10 +780,17 @@ class BaileysWhatsAppBridge {
 
       if (connection === 'open') {
         console.log(`connected ${userId}`);
+        this.pairingQrSessions.set(userId, 0);
+        this.reconnectAttempts.delete(userId);
+        this.pairingCodes.delete(userId);
         this.updateClientState(userId, {
           connected: true,
           lastSeen: new Date().toISOString(),
           hasSession: true,
+          awaitingPairing: false,
+          pairingStopped: false,
+          pairingStopReason: null,
+          disconnectStatusCode: null,
         });
 
         // Notify backend
@@ -657,13 +824,23 @@ class BaileysWhatsAppBridge {
 
       if (connection === 'close') {
         const B = await getBaileys();
-        const shouldReconnect = (lastDisconnect?.error instanceof Boom ? lastDisconnect.error.output?.statusCode : null) !== B.DisconnectReason.loggedOut;
-        console.log(`connection closed for ${userId} due to ${lastDisconnect?.error}, reconnecting: ${shouldReconnect}`);
+        const statusCode = lastDisconnect?.error instanceof Boom
+          ? lastDisconnect.error.output?.statusCode
+          : null;
+        const loggedOut = statusCode === B.DisconnectReason.loggedOut;
+        const reasonMsg = lastDisconnect?.error?.message || 'unknown';
+        const registered = await this.hasRegisteredSession(userId);
+
+        console.log(
+          `connection closed for ${userId} statusCode=${statusCode} reason=${reasonMsg} `
+          + `registered=${registered} loggedOut=${loggedOut}`
+        );
 
         this.updateClientState(userId, {
           connected: false,
           lastDisconnected: new Date().toISOString(),
-          disconnectReason: lastDisconnect?.error?.message || 'unknown',
+          disconnectReason: reasonMsg,
+          disconnectStatusCode: statusCode,
         });
 
         // Mirror of the /connected notification so the backend does not keep
@@ -673,17 +850,43 @@ class BaileysWhatsAppBridge {
           timestamp: new Date().toISOString(),
           clientInfo: {
             connected: false,
-            loggedOut: !shouldReconnect,
-            reason: lastDisconnect?.error?.message || 'unknown',
+            loggedOut,
+            reason: reasonMsg,
+            statusCode,
           },
         }, { headers: this.backendHeaders() }).catch((err) => console.error(`notify backend disconnect failed ${userId}:`, err?.message || err));
 
-        if (shouldReconnect) {
-          const old = this.reconnectTimeouts.get(userId);
-          if (old) clearTimeout(old);
-          const t = setTimeout(() => this.attemptReconnect(userId), 30000);
-          this.reconnectTimeouts.set(userId, t);
+        this.qrCodes.delete(userId);
+
+        // Never auto-spin new QR sockets for an unpaired account — that is what
+        // burned WhatsApp's link-device anti-abuse for user 2 (~186 cycles).
+        if (loggedOut) {
+          console.log(`logged out ${userId} - not reconnecting`);
+          this.updateClientState(userId, { awaitingPairing: false, hasSession: false });
+          return;
         }
+
+        if (!registered) {
+          const used = this.pairingQrSessions.get(userId) || 0;
+          const stopped = used >= MAX_PAIRING_QR_SESSIONS;
+          console.log(
+            `pairing close for ${userId}: no registered session `
+            + `(${used}/${MAX_PAIRING_QR_SESSIONS}) - ${stopped ? 'STOP' : 'awaiting explicit re-init'}`
+          );
+          this.updateClientState(userId, {
+            awaitingPairing: true,
+            pairingStopped: stopped,
+            pairingStopReason: stopped
+              ? `pairing budget exhausted (${MAX_PAIRING_QR_SESSIONS})`
+              : 'qr session closed without scan',
+            hasSession: false,
+          });
+          // Drop the dead unpaired socket; admin must call /initialize or /pair-code again.
+          this.clients.delete(userId);
+          return;
+        }
+
+        this.scheduleSessionReconnect(userId);
       }
     });
 
@@ -806,10 +1009,23 @@ class BaileysWhatsAppBridge {
     const snap = this.clientStates.get(userId) || {};
     const client = this.clients.get(userId);
 
+    // Never turn a failed pairing into an infinite QR spawn.
+    if (!(await this.hasRegisteredSession(userId))) {
+      console.log(`reconnect skipped ${userId}: no registered session`);
+      this.updateClientState(userId, {
+        awaitingPairing: true,
+        hasSession: false,
+      });
+      return;
+    }
+
     if (client) {
       let fullyConnected = false;
       try { fullyConnected = !!(client.user) && snap.connected === true; } catch (_) {}
-      if (fullyConnected) return; // Already connected
+      if (fullyConnected) {
+        this.reconnectAttempts.delete(userId);
+        return; // Already connected
+      }
 
       // Recycle stale client (preserve session on disk)
       try { client.end(); } catch (_) {}
@@ -821,10 +1037,7 @@ class BaileysWhatsAppBridge {
       await this.initializeClientWithReconnect(userId, { preferExistingSession: true });
     } catch (error) {
       console.error(`reconnect failed ${userId}:`, error?.message || error);
-      const old = this.reconnectTimeouts.get(userId);
-      if (old) clearTimeout(old);
-      const t = setTimeout(() => this.attemptReconnect(userId), 120000);
-      this.reconnectTimeouts.set(userId, t);
+      this.scheduleSessionReconnect(userId);
     }
   }
 
@@ -838,7 +1051,8 @@ class BaileysWhatsAppBridge {
           live = client.user ? 'CONNECTED' : 'DISCONNECTED';
         } catch (_) {}
         const ok = live === 'CONNECTED' && state.connected === true;
-        if ((state.hasSession || (await this.checkSessionExists(userId))) && !ok) {
+        const registered = state.hasSession || (await this.hasRegisteredSession(userId));
+        if (registered && !ok) {
           console.log(`health says reconnect ${userId} (live=${live})`);
           this.attemptReconnect(userId);
         }
@@ -1223,6 +1437,9 @@ class BaileysWhatsAppBridge {
       this.clients.delete(userId);
       this.clientStates.delete(userId);
       this.qrCodes.delete(userId);
+      this.pairingCodes.delete(userId);
+      this.pairingQrSessions.delete(userId);
+      this.reconnectAttempts.delete(userId);
       this.persistentChats.delete(userId); // Clear persistent chat cache
       try {
         const tStore = this.storePersistIntervals.get(userId);
@@ -1407,8 +1624,12 @@ class BaileysWhatsAppBridge {
         const all = Array.from(new Set([...diskIds, ...stateIds]));
 
         for (const userId of all) {
-          const has = await this.checkSessionExists(userId);
-          if (!has) continue;
+          const has = await this.hasRegisteredSession(userId);
+          if (!has) {
+            // Half-written QR attempt folders must not spawn pairing sockets on boot.
+            console.log(`Skipping restore for ${userId} - no registered Baileys session`);
+            continue;
+          }
 
           // Skip users missing from the roster (only when we actually know who
           // is active). Disconnect and skip the restore, but never delete the

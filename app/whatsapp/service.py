@@ -101,6 +101,32 @@ class WhatsAppService:
             logger.error(f"Failed to initialize WhatsApp client: {e}")
             return False
 
+    async def request_pairing_code(self, user_id: int, phone: str) -> dict:
+        """Request a WhatsApp link-with-phone pairing code via the bridge."""
+        try:
+            if not await self.start_bridge_if_needed():
+                return {"success": False, "error": "WhatsApp bridge unavailable"}
+
+            logger.info(f"Requesting pairing code for user {user_id}")
+            response = await self.http_client.post(
+                f"{self.bridge_url}/pair-code/{user_id}",
+                json={"phone": phone},
+                timeout=60.0,
+            )
+
+            if response.status_code == 200:
+                return response.json()
+
+            logger.error(f"Failed to request pairing code: {response.text}")
+            return {
+                "success": False,
+                "error": response.text,
+                "status_code": response.status_code,
+            }
+        except Exception as e:
+            logger.error(f"Failed to request pairing code: {e}")
+            return {"success": False, "error": str(e)}
+
     async def get_client_status(self, user_id: int) -> dict:
         """Get client status"""
         try:

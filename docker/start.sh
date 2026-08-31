@@ -67,10 +67,11 @@ log "📁 Session path: ${WHATSAPP_SESSION_PATH} (RESTORE_ON_START=${RESTORE_ON_
 mkdir -p "${WHATSAPP_SESSION_PATH}"
 mkdir -p /app/logs
 
-# Start WhatsApp Bridge in background
+# Start WhatsApp Bridge in background (file + container stdout for Coolify logs)
 log "🌉 Starting WhatsApp Bridge..."
 cd /app/whatsapp_bridge
-node bridge.js > /app/logs/bridge.log 2>&1 &
+# Process substitution keeps $! as the node PID (unlike `node | tee`).
+node bridge.js > >(tee -a /app/logs/bridge.log) 2>&1 &
 BRIDGE_PID=$!
 cd /app
 
@@ -130,7 +131,7 @@ while true; do
     if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
         log "❌ WhatsApp Bridge died, restarting..."
         cd /app/whatsapp_bridge
-        node bridge.js > /app/logs/bridge.log 2>&1 &
+        node bridge.js > >(tee -a /app/logs/bridge.log) 2>&1 &
         BRIDGE_PID=$!
         cd /app
         sleep 10
