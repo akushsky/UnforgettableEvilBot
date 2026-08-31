@@ -16,7 +16,6 @@ from app.core.repositories import (
     digest_preference_repository,
     monitored_chat_repository,
     openai_metrics_repository,
-    resource_savings_repository,
     system_log_repository,
     user_repository,
     user_settings_repository,
@@ -38,7 +37,6 @@ class RepositoryFactory:
     get_digest_log_repository = staticmethod(lambda: digest_log_repository)
     get_system_log_repository = staticmethod(lambda: system_log_repository)
     get_user_settings_repository = staticmethod(lambda: user_settings_repository)
-    get_resource_savings_repository = staticmethod(lambda: resource_savings_repository)
     get_openai_metrics_repository = staticmethod(lambda: openai_metrics_repository)
     get_digest_preference_repository = staticmethod(
         lambda: digest_preference_repository

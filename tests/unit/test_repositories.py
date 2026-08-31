@@ -7,7 +7,6 @@ from app.core.repositories import (
     DigestLogRepository,
     MonitoredChatRepository,
     OpenAIMetricsRepository,
-    ResourceSavingsRepository,
     SystemLogRepository,
     UserRepository,
     UserSettingsRepository,
@@ -17,7 +16,6 @@ from app.models.database import (
     DigestLog,
     MonitoredChat,
     OpenAIMetrics,
-    ResourceSavings,
     User,
     UserSettings,
     WhatsAppMessage,
@@ -556,51 +554,6 @@ class TestUserSettingsRepository:
 
         # Assert
         assert result == mock_settings
-
-
-class TestResourceSavingsRepository:
-    """Test ResourceSavingsRepository functionality"""
-
-    def setup_method(self):
-        """Setup test method"""
-        self.repository = ResourceSavingsRepository()
-        self.mock_db = Mock(spec=Session)
-
-    def test_get_savings_in_period(self):
-        """Test get_savings_in_period method"""
-        # Arrange
-        period_start = datetime.utcnow() - timedelta(days=30)
-        period_end = datetime.utcnow()
-        mock_savings = [Mock(spec=ResourceSavings), Mock(spec=ResourceSavings)]
-        self.mock_db.query.return_value.filter.return_value.all.return_value = (
-            mock_savings
-        )
-
-        # Act
-        result = self.repository.get_savings_in_period(
-            self.mock_db, period_start, period_end
-        )
-
-        # Assert
-        assert result == mock_savings
-
-    def test_get_savings_by_user_in_period(self):
-        """Test get_savings_by_user_in_period method"""
-        # Arrange
-        user_id = 1
-        period_start = datetime.utcnow() - timedelta(days=30)
-        mock_savings = [Mock(spec=ResourceSavings), Mock(spec=ResourceSavings)]
-        self.mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-            mock_savings
-        )
-
-        # Act
-        result = self.repository.get_savings_by_user_in_period(
-            self.mock_db, user_id, period_start
-        )
-
-        # Assert
-        assert result == mock_savings
 
 
 class TestOpenAIMetricsRepository:

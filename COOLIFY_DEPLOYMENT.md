@@ -109,7 +109,6 @@ The system is configured with optimized limits:
 ### **Built-in Monitoring**
 - Health check endpoint: `/health`
 - Metrics endpoint: `/metrics`
-- Monitoring dashboard: `/monitoring/dashboard`
 
 ### **Coolify Monitoring**
 - Resource usage (CPU, Memory, Disk)
@@ -176,11 +175,11 @@ The system is configured with optimized limits:
 - [ ] Resource limits appropriate
 
 ### **After Deployment**
-- [ ] Health check passes
+- [ ] Health check passes (`/health`)
+- [ ] Metrics endpoint reachable (`/metrics`, admin auth for JSON)
 - [ ] API documentation accessible
 - [ ] Database migrations completed
 - [ ] WhatsApp Bridge running
-- [ ] Monitoring dashboard working
 
 ### **Security Considerations**
 - [ ] Use HTTPS (Coolify handles this)

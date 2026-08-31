@@ -110,19 +110,18 @@
                         <h6>Немедленная генерация дайджеста</h6>
                         <p class="text-muted mb-0">Создать и отправить дайджест сейчас, не дожидаясь планового времени</p>
                         <small class="text-muted">
-                            {% if user.telegram_channel_id and user.whatsapp_connected %}
+                            {% if can_generate_digest %}
                                 <i class="fas fa-check text-success"></i> Все настройки готовы для отправки
                             {% else %}
                                 <i class="fas fa-exclamation-triangle text-warning"></i>
-                                {% if not user.whatsapp_connected %}WhatsApp не подключен. {% endif %}
-                                {% if not user.telegram_channel_id %}Telegram канал не настроен.{% endif %}
+                                {{ digest_block_reason or "Нет канала доставки дайджеста." }}
                             {% endif %}
                         </small>
                     </div>
                     <div class="col-md-4 text-end">
                         <button class="btn btn-warning"
                                 onclick="generateImmediateDigest({{ user.id }})"
-                                {% if not (user.telegram_channel_id and user.whatsapp_connected) %}disabled{% endif %}
+                                {% if not can_generate_digest %}disabled{% endif %}
                                 id="generate-digest-btn">
                             <i class="fas fa-bolt"></i> Сформировать дайджест
                         </button>
@@ -244,7 +243,6 @@
                     </button>
                     <ul class="dropdown-menu">
                         <li><a class="dropdown-item" href="#" onclick="refreshQRCode()"><i class="fas fa-sync"></i> Обновить QR</a></li>
-                        <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#sendQRModal"><i class="fas fa-envelope"></i> Отправить по email</a></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item" href="#" onclick="downloadQRCode()"><i class="fas fa-download"></i> Скачать QR</a></li>
                     </ul>
@@ -549,18 +547,7 @@
                     </div>
 
                     <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="include_media_messages" name="include_media_messages" checked>
-                                    <label class="form-check-label" for="include_media_messages">
-                                        <i class="fas fa-image"></i> Включать медиа-сообщения
-                                    </label>
-                                </div>
-                                <div class="form-text">Включать сообщения с изображениями, видео и файлами</div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
+                        <div class="col-md-12">
                             <div class="mb-3">
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="urgent_notifications" name="urgent_notifications" checked>
@@ -571,41 +558,6 @@
                                 <div class="form-text">Отправлять уведомления о важных событиях</div>
                             </div>
                         </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="daily_summary" name="daily_summary" checked>
-                                    <label class="form-check-label" for="daily_summary">
-                                        <i class="fas fa-calendar-day"></i> Ежедневные сводки
-                                    </label>
-                                </div>
-                                <div class="form-text">Получать ежедневные сводки о результатах очистки</div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="auto_add_new_chats" name="auto_add_new_chats">
-                                    <label class="form-check-label" for="auto_add_new_chats">
-                                        <i class="fas fa-plus-circle"></i> Автоматически добавлять новые чаты
-                                    </label>
-                                </div>
-                                <div class="form-text">Автоматически добавлять новые чаты в мониторинг</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="auto_add_group_chats_only" name="auto_add_group_chats_only" checked>
-                            <label class="form-check-label" for="auto_add_group_chats_only">
-                                <i class="fas fa-users"></i> Добавлять только групповые чаты
-                            </label>
-                        </div>
-                        <div class="form-text">При автоматическом добавлении включать только групповые чаты</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -637,42 +589,6 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- Модальное окно для отправки QR-кода -->
-<div class="modal fade" id="sendQRModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="fas fa-envelope"></i> Отправить QR-код клиенту</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form action="/admin/users/{{ user.id }}/qr/send" method="post">
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="client-email" class="form-label">Email клиента</label>
-                        <input type="email" class="form-control" id="client-email" name="email"
-                               value="{{ user.email }}" required>
-                        <div class="form-text">QR-код будет отправлен на указанный email</div>
-                    </div>
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle"></i>
-                        <strong>Инструкция для клиента:</strong><br>
-                        1. Откройте WhatsApp на телефоне<br>
-                        2. Перейдите в Настройки → Связанные устройства<br>
-                        3. Нажмите "Привязать устройство"<br>
-                        4. Отсканируйте полученный QR-код
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-paper-plane"></i> Отправить
-                    </button>
-                </div>
-            </form>
         </div>
     </div>
 </div>
@@ -782,9 +698,6 @@ function displayQRCode(qrCodeDataUrl, timestamp) {
                 </button>
                 <button class="btn btn-outline-primary btn-sm" onclick="downloadQRCode()" title="Скачать QR-код">
                     <i class="fas fa-download"></i>
-                </button>
-                <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#sendQRModal" title="Отправить по email">
-                    <i class="fas fa-envelope"></i>
                 </button>
             </div>
 
@@ -1057,44 +970,6 @@ function downloadQRCode() {
     }
 }
 
-async function sendQRCode(event) {
-    event.preventDefault();
-    const email = document.getElementById('recipient-email').value;
-    const submitBtn = event.target.querySelector('button[type="submit"]');
-
-    if (!currentQRCode) {
-        showToast('Сначала сгенерируйте QR-код', 'warning');
-        return;
-    }
-
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Отправка...';
-
-    try {
-        const formData = new FormData();
-        formData.append('email', email);
-
-        const response = await fetch(`/admin/users/{{ user.id }}/qr/send`, {
-            method: 'POST',
-            body: formData
-        });
-        const result = await response.json();
-
-        if (result.status === 'success') {
-            showToast('QR-код успешно отправлен на ' + email, 'success');
-            const modal = bootstrap.Modal.getInstance(document.getElementById('sendQRModal'));
-            modal.hide();
-        } else {
-            showToast('Ошибка отправки: ' + result.message, 'danger');
-        }
-    } catch (error) {
-        showToast('Ошибка отправки: ' + error.message, 'danger');
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Отправить QR-код';
-    }
-}
-
 function showToast(message, type = 'info') {
     // Создаем toast уведомление
     const toast = document.createElement('div');
@@ -1287,11 +1162,7 @@ async function loadCleanupSettings() {
             // Заполняем форму текущими настройками
             document.getElementById('max_message_age_hours').value = settings.max_message_age_hours;
             document.getElementById('min_importance_level').value = settings.min_importance_level;
-            document.getElementById('include_media_messages').checked = settings.include_media_messages;
             document.getElementById('urgent_notifications').checked = settings.urgent_notifications;
-            document.getElementById('daily_summary').checked = settings.daily_summary;
-            document.getElementById('auto_add_new_chats').checked = settings.auto_add_new_chats;
-            document.getElementById('auto_add_group_chats_only').checked = settings.auto_add_group_chats_only;
         }
     } catch (error) {
         console.error('Error loading cleanup settings:', error);
@@ -1404,9 +1275,10 @@ async function loadDigestsHistory() {
 
                 digests.forEach((digest, index) => {
                     const date = new Date(digest.created_at).toLocaleString('ru-RU');
-                    const status = digest.telegram_sent ? 'success' : 'danger';
-                    const statusIcon = digest.telegram_sent ? 'check-circle' : 'times-circle';
-                    const statusText = digest.telegram_sent ? 'Отправлен' : 'Не отправлен';
+                    const sent = digest.telegram_sent || digest.whatsapp_sent;
+                    const status = sent ? 'success' : 'danger';
+                    const statusIcon = sent ? 'check-circle' : 'times-circle';
+                    const statusText = sent ? 'Отправлен' : 'Не отправлен';
 
                     html += `
                         <div class="col-md-6 mb-3">

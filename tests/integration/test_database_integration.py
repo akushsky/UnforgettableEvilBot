@@ -14,7 +14,6 @@ from app.models.database import (
     DigestLog,
     MonitoredChat,
     OpenAIMetrics,
-    ResourceSavings,
     SystemLog,
     User,
     WhatsAppMessage,
@@ -213,42 +212,6 @@ class TestDatabaseIntegration:
             .all()
         )
         assert len(recent_logs) == 2  # Logs from last 2 hours (0 and 1 hour ago)
-
-    def test_resource_savings_integration(
-        self, db_session: Session, clean_database, sample_user
-    ):
-        """Test resource savings with real database operations."""
-        # Create resource savings
-        savings = []
-        for i in range(3):
-            saving = ResourceSavings(
-                user_id=sample_user.id,
-                period_start=datetime.utcnow() - timedelta(days=30),
-                period_end=datetime.utcnow(),
-                messages_processed_saved=i * 10,
-                memory_mb_saved=i * 5.5,
-                reason="test_savings",
-                created_at=datetime.utcnow() - timedelta(days=i),
-            )
-            savings.append(saving)
-
-        db_session.add_all(savings)
-        db_session.commit()
-
-        # Verify savings were created
-        retrieved_savings = (
-            db_session.query(ResourceSavings)
-            .filter(ResourceSavings.user_id == sample_user.id)
-            .all()
-        )
-        assert len(retrieved_savings) == 3
-
-        # Test calculations
-        total_messages = sum(s.messages_processed_saved for s in retrieved_savings)
-        assert total_messages == 30  # 0 + 10 + 20
-
-        total_storage = sum(s.memory_mb_saved for s in retrieved_savings)
-        assert total_storage == 16.5  # 0 + 5.5 + 11.0
 
     def test_openai_metrics_integration(self, db_session: Session, clean_database):
         """Test OpenAI metrics with real database operations."""

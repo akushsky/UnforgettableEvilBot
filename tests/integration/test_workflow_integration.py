@@ -5,7 +5,6 @@ import pytest
 
 from app.core.data_cleanup import DataCleanupService
 from app.core.repository_factory import repository_factory
-from app.core.resource_savings import ResourceSavingsService
 from app.models.database import (
     DigestLog,
     MonitoredChat,
@@ -387,50 +386,6 @@ class TestDataCleanupWorkflow:
         assert old_logs_count == 0  # All old logs should be removed
 
 
-class TestResourceSavingsWorkflow:
-    """Integration tests for resource savings workflow."""
-
-    @pytest.mark.asyncio
-    async def test_resource_savings_workflow(self, db_session, sample_user):
-        """Test complete resource savings workflow."""
-        # 1. Create resource savings records
-        repository_factory.get_resource_savings_repository()
-        savings_service = ResourceSavingsService()
-
-        # Calculate savings for user
-        savings = savings_service.calculate_savings_for_user(
-            db_session,
-            sample_user.id,
-            period_start=datetime.utcnow() - timedelta(hours=24),
-            period_end=datetime.utcnow(),
-        )
-
-        assert savings is not None
-        assert "messages_processed_saved" in savings
-        assert "memory_mb_saved" in savings
-
-        # 2. Record suspension savings
-        savings_service.record_suspension_savings(
-            db_session,
-            sample_user.id,
-            suspension_start=datetime.utcnow() - timedelta(hours=12),
-        )
-
-        # 3. Get total savings
-        total_savings = savings_service.get_total_savings(db_session, days_back=30)
-        assert total_savings is not None
-        assert "total_memory_mb_saved" in total_savings
-        assert "total_cpu_seconds_saved" in total_savings
-        assert "records_count" in total_savings
-        assert "total_messages_processed_saved" in total_savings
-
-        # 4. Get current system savings
-        system_savings = savings_service.get_current_system_savings()
-        assert system_savings is not None
-        assert "current_memory_usage_mb" in system_savings
-        assert "current_cpu_usage_percent" in system_savings
-
-
 class TestEndToEndWorkflow:
     """Integration tests for complete end-to-end workflows."""
 
@@ -491,22 +446,12 @@ class TestEndToEndWorkflow:
         suspended_user = user_repo.get_by_id(db_session, user.id)
         assert suspended_user.is_active is False
 
-        # 4. Resource Savings Calculation
-        savings_service = ResourceSavingsService()
-        savings = savings_service.calculate_savings_for_user(
-            db_session,
-            user.id,
-            period_start=datetime.utcnow() - timedelta(hours=24),
-            period_end=datetime.utcnow(),
-        )
-        assert savings is not None
-
-        # 5. User Resumption
+        # 4. User Resumption
         user_repo.update(db_session, user, {"is_active": True})
         resumed_user = user_repo.get_by_id(db_session, user.id)
         assert resumed_user.is_active
 
-        # 6. Data Cleanup (simulate old data)
+        # 5. Data Cleanup (simulate old data)
         # Make some data old
         for message in messages[:5]:
             msg_repo.update(
@@ -522,7 +467,7 @@ class TestEndToEndWorkflow:
         deleted = await cleanup_service.cleanup_old_messages(db_session)
         assert isinstance(deleted, dict)
 
-        # 7. Test digest generation workflow
+        # 6. Test digest generation workflow
         digest_repo = repository_factory.get_digest_log_repository()
         digest = DigestLog(
             user_id=user.id,

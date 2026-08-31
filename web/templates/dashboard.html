@@ -102,9 +102,6 @@
                         <a href="/admin/users" class="btn btn-light btn-lg">
                             <i class="fas fa-users me-2"></i>Управление пользователями
                         </a>
-                        <a href="/monitoring/dashboard" class="btn btn-outline-light btn-lg">
-                            <i class="fas fa-chart-line me-2"></i>Мониторинг системы
-                        </a>
                         <button type="button" class="btn btn-outline-light btn-lg" onclick="refreshDashboardData()" title="Обновить данные">
                             <i class="fas fa-sync-alt me-2"></i>Обновить
                         </button>
@@ -205,18 +202,6 @@
                     </div>
                 </div>
             </div>
-
-            <div class="col-md-2 mb-3">
-                <div class="card stat-card text-center h-100">
-                    <div class="card-body">
-                        <div class="stat-icon text-success mb-2">
-                            <i class="fas fa-leaf"></i>
-                        </div>
-                        <h3 class="card-title text-success" data-stat="resource-savings-connections">{{ stats.resource_savings.total_whatsapp_connections_saved if stats.resource_savings else 0 }}</h3>
-                        <p class="card-text text-muted">Сохранено соединений</p>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Quick Actions -->
@@ -227,7 +212,7 @@
                 </h2>
             </div>
 
-            <div class="col-md-3 mb-3">
+            <div class="col-md-6 mb-3">
                 <div class="card quick-action-card h-100">
                     <div class="card-body text-center">
                         <i class="fas fa-user-plus fa-3x text-primary mb-3"></i>
@@ -240,33 +225,7 @@
                 </div>
             </div>
 
-            <div class="col-md-3 mb-3">
-                <div class="card quick-action-card h-100">
-                    <div class="card-body text-center">
-                        <i class="fas fa-chart-line fa-3x text-success mb-3"></i>
-                        <h5 class="card-title">Мониторинг</h5>
-                        <p class="card-text">Просмотр метрик и состояния системы</p>
-                        <a href="/monitoring/dashboard" class="btn btn-success">
-                            <i class="fas fa-eye me-2"></i>Просмотреть
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-3 mb-3">
-                <div class="card quick-action-card h-100">
-                    <div class="card-body text-center">
-                        <i class="fas fa-cogs fa-3x text-info mb-3"></i>
-                        <h5 class="card-title">Настройки</h5>
-                        <p class="card-text">Конфигурация системы и параметров</p>
-                        <a href="/admin/users" class="btn btn-info">
-                            <i class="fas fa-wrench me-2"></i>Настроить
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-3 mb-3">
+            <div class="col-md-6 mb-3">
                 <div class="card quick-action-card h-100">
                     <div class="card-body text-center">
                         <i class="fas fa-broom fa-3x text-warning mb-3"></i>
@@ -275,19 +234,6 @@
                         <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#cleanupModal">
                             <i class="fas fa-trash me-2"></i>Очистить
                         </button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-3 mb-3">
-                <div class="card quick-action-card h-100">
-                    <div class="card-body text-center">
-                        <i class="fas fa-leaf fa-3x text-success mb-3"></i>
-                        <h5 class="card-title">Экономия ресурсов</h5>
-                        <p class="card-text">Мониторинг экономии от suspended пользователей</p>
-                        <a href="/admin/resource-savings-page" class="btn btn-success">
-                            <i class="fas fa-chart-line me-2"></i>Просмотреть
-                        </a>
                     </div>
                 </div>
             </div>
@@ -321,13 +267,6 @@
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span>Пул соединений</span>
                                 <span class="text-muted" id="poolConnections">{{ system_health.get('pool_info', {}).get('checked_in', 0) or 0 }}/{{ system_health.get('pool_info', {}).get('pool_size', 0) or 0 }}</span>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <span>Размер БД</span>
-                                <span class="text-muted">{{ "%.1f"|format(system_health.get('pool_info', {}).get('pool_size', 0) / 1024) if system_health.get('pool_info') else 0 }} MB</span>
                             </div>
                         </div>
 
@@ -392,7 +331,7 @@
                     <div class="card-body recent-activity">
                         {% if recent_digests %}
                             {% for digest in recent_digests %}
-                            <div class="activity-item {{ 'success' if digest.telegram_sent else 'warning' }}">
+                            <div class="activity-item {{ 'success' if (digest.telegram_sent or digest.whatsapp_sent) else 'warning' }}">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
                                         <strong>{{ digest.username }}</strong>
@@ -400,8 +339,8 @@
                                         <small class="text-muted">{{ digest.message_count }} сообщений</small>
                                     </div>
                                     <div class="text-end">
-                                        <span class="badge bg-{{ 'success' if digest.telegram_sent else 'warning' }}">
-                                            {{ 'Отправлен' if digest.telegram_sent else 'Не отправлен' }}
+                                        <span class="badge bg-{{ 'success' if (digest.telegram_sent or digest.whatsapp_sent) else 'warning' }}">
+                                            {{ 'Отправлен' if (digest.telegram_sent or digest.whatsapp_sent) else 'Не отправлен' }}
                                         </span>
                                         <br>
                                         <small class="text-muted">{{ digest.created_at.strftime('%d.%m.%Y %H:%M') if digest.created_at else '' }}</small>
@@ -418,7 +357,7 @@
                     </div>
                     <div class="card-footer">
                         <a href="/admin/users" class="btn btn-outline-primary btn-sm">
-                            <i class="fas fa-list me-2"></i>Все дайджесты
+                            <i class="fas fa-users me-2"></i>К пользователям
                         </a>
                     </div>
                 </div>
@@ -694,20 +633,6 @@
                     });
 
                     // Update pool connections (already handled by updatePoolConnections)
-
-                    // Update database size if available (only for specific elements)
-                    const dbSizeElements = document.querySelectorAll('.text-muted');
-                    dbSizeElements.forEach(element => {
-                        // Only update elements that are specifically for database size
-                        if (element.textContent.includes('MB') &&
-                            element.closest('.card-body') &&
-                            element.closest('.card-body').querySelector('.stat-icon .fa-database') &&
-                            data.checks && data.checks.database && data.checks.database.pool_info) {
-                            const poolSize = data.checks.database.pool_info.pool_size;
-                            const sizeInMB = (poolSize / 1024).toFixed(1);
-                            element.textContent = `${sizeInMB} MB`;
-                        }
-                    });
                 })
                 .catch(error => {
                     console.error('Error updating system health:', error);
@@ -768,15 +693,6 @@
                         digestsElement.classList.add('updating');
                         digestsElement.textContent = digests.last_24h || 0;
                         setTimeout(() => digestsElement.classList.remove('updating'), 600);
-                    }
-
-                    // Update resource savings connections count
-                    const resourceSavingsElement = document.querySelector('[data-stat="resource-savings-connections"]');
-                    if (resourceSavingsElement) {
-                        const resourceSavings = metrics.resource_savings || {};
-                        resourceSavingsElement.classList.add('updating');
-                        resourceSavingsElement.textContent = resourceSavings.total_whatsapp_connections_saved || 0;
-                        setTimeout(() => resourceSavingsElement.classList.remove('updating'), 600);
                     }
                 })
                 .catch(error => {

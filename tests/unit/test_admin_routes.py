@@ -412,10 +412,14 @@ def _wire_digest_user(mock_repo_factory, mock_user, phone_numbers=()):
 
 
 @patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.core.digest_delivery.repository_factory")
 @patch("app.api.admin_routes.repository_factory")
-def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
+def test_generate_digest(
+    mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
+):
     """Test POST /admin/users/{user_id}/digest/generate creates digest."""
     _wire_digest_user(mock_repo_factory, _digest_candidate())
+    _wire_digest_user(mock_delivery_repo_factory, _digest_candidate())
 
     mock_scheduler = AsyncMock()
     mock_scheduler.create_and_send_digest = AsyncMock()
@@ -429,16 +433,16 @@ def test_generate_digest(mock_repo_factory, mock_scheduler_cls, client):
 
 
 @patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.core.digest_delivery.repository_factory")
 @patch("app.api.admin_routes.repository_factory")
 def test_generate_digest_allowed_for_whatsapp_only_user(
-    mock_repo_factory, mock_scheduler_cls, client
+    mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
 ):
     """A WhatsApp-preference user with phones needs no Telegram channel."""
-    _wire_digest_user(
-        mock_repo_factory,
-        _digest_candidate(preference_name="whatsapp", telegram_channel_id=None),
-        phone_numbers=["+972500000000"],
-    )
+    user = _digest_candidate(preference_name="whatsapp", telegram_channel_id=None)
+    phones = ["+972500000000"]
+    _wire_digest_user(mock_repo_factory, user, phone_numbers=phones)
+    _wire_digest_user(mock_delivery_repo_factory, user, phone_numbers=phones)
 
     mock_scheduler = AsyncMock()
     mock_scheduler.create_and_send_digest = AsyncMock()
@@ -450,14 +454,15 @@ def test_generate_digest_allowed_for_whatsapp_only_user(
     assert response.json()["status"] == "success"
 
 
+@patch("app.core.digest_delivery.repository_factory")
 @patch("app.api.admin_routes.repository_factory")
-def test_generate_digest_rejected_without_delivery_channel(mock_repo_factory, client):
+def test_generate_digest_rejected_without_delivery_channel(
+    mock_repo_factory, mock_delivery_repo_factory, client
+):
     """No Telegram channel and no WhatsApp phones means nowhere to deliver."""
-    _wire_digest_user(
-        mock_repo_factory,
-        _digest_candidate(preference_name="whatsapp", telegram_channel_id=None),
-        phone_numbers=[],
-    )
+    user = _digest_candidate(preference_name="whatsapp", telegram_channel_id=None)
+    _wire_digest_user(mock_repo_factory, user, phone_numbers=[])
+    _wire_digest_user(mock_delivery_repo_factory, user, phone_numbers=[])
 
     response = client.post("/admin/users/1/digest/generate")
 
@@ -465,24 +470,20 @@ def test_generate_digest_rejected_without_delivery_channel(mock_repo_factory, cl
     assert response.json()["status"] == "error"
 
 
+@patch("app.core.digest_delivery.repository_factory")
 @patch("app.api.admin_routes.repository_factory")
-def test_get_messages(mock_repo_factory, client):
-    """Test GET /admin/users/{user_id}/messages returns messages."""
-    mock_user_repo = Mock()
-    mock_user_repo.get_by_id_or_404.return_value = Mock()
-    mock_repo_factory.get_user_repository.return_value = mock_user_repo
+def test_generate_digest_rejected_whatsapp_pref_despite_telegram(
+    mock_repo_factory, mock_delivery_repo_factory, client
+):
+    """WhatsApp preference with no phones must not fall back to Telegram."""
+    user = _digest_candidate(preference_name="whatsapp", telegram_channel_id="-100123")
+    _wire_digest_user(mock_repo_factory, user, phone_numbers=[])
+    _wire_digest_user(mock_delivery_repo_factory, user, phone_numbers=[])
 
-    mock_chat_repo = Mock()
-    mock_chat_repo.get_active_chats_for_user.return_value = []
-    mock_repo_factory.get_monitored_chat_repository.return_value = mock_chat_repo
+    response = client.post("/admin/users/1/digest/generate")
 
-    response = client.get("/admin/users/1/messages")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert "messages" in data
-    assert data["total"] == 0
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
 
 
 @patch("app.api.admin_routes.repository_factory")
@@ -492,8 +493,16 @@ def test_get_digests(mock_repo_factory, client):
     mock_user_repo.get_by_id_or_404.return_value = Mock()
     mock_repo_factory.get_user_repository.return_value = mock_user_repo
 
+    mock_digest = Mock()
+    mock_digest.id = 1
+    mock_digest.digest_content = "hello"
+    mock_digest.message_count = 3
+    mock_digest.telegram_sent = False
+    mock_digest.whatsapp_sent = True
+    mock_digest.created_at.isoformat.return_value = "2024-01-01T00:00:00"
+
     mock_digest_repo = Mock()
-    mock_digest_repo.get_digests_for_period.return_value = []
+    mock_digest_repo.get_digests_for_period.return_value = [mock_digest]
     mock_repo_factory.get_digest_log_repository.return_value = mock_digest_repo
 
     response = client.get("/admin/users/1/digests")
@@ -502,6 +511,8 @@ def test_get_digests(mock_repo_factory, client):
     data = response.json()
     assert data["status"] == "success"
     assert "digests" in data
+    assert data["digests"][0]["whatsapp_sent"] is True
+    assert data["digests"][0]["telegram_sent"] is False
 
 
 @patch("app.core.data_cleanup.cleanup_service")
@@ -533,25 +544,6 @@ def test_storage_cleanup(mock_cleanup, client):
     data = response.json()
     assert data["status"] == "success"
     assert "cleanup_results" in data
-
-
-@patch("app.core.resource_savings.resource_savings_service")
-def test_resource_savings(mock_savings, client):
-    """Test GET /admin/resource-savings returns savings metrics."""
-    mock_savings.get_total_savings.return_value = {
-        "total_whatsapp_connections_saved": 5,
-        "total_memory_mb_saved": 100,
-    }
-    mock_savings.get_current_system_savings.return_value = {
-        "current_memory_usage_mb": 50,
-    }
-
-    response = client.get("/admin/resource-savings")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert "total_savings" in data
 
 
 @patch("app.api.admin_routes.httpx")

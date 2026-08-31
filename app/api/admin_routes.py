@@ -1,10 +1,10 @@
 import httpx
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth.admin_auth import get_admin_auth_dependency
+from app.core.digest_delivery import has_digest_delivery_channel
 from app.core.repository_factory import repository_factory
 from app.database.connection import get_db
 from app.dependencies import get_whatsapp_service
@@ -19,7 +19,6 @@ router = APIRouter(
     tags=["web-admin"],
     dependencies=[Depends(get_admin_auth_dependency)],
 )
-templates = Jinja2Templates(directory="web/templates")
 
 
 # --- Chat management routes ---
@@ -310,25 +309,6 @@ async def update_user_whatsapp_status(
 # --- Digest routes ---
 
 
-def _has_digest_delivery_channel(user, db: Session) -> bool:
-    """Whether DigestScheduler would have somewhere to deliver the digest.
-
-    Mirrors create_and_send_digest: WhatsApp is used only when it is the
-    explicit preference and phone numbers exist; everything else falls back to
-    Telegram.
-    """
-    preference = getattr(user.digest_preference, "name", None)
-
-    if preference == "whatsapp":
-        phone_numbers = repository_factory.get_whatsapp_phone_repository().get_phone_numbers_for_user(
-            db, user.id
-        )
-        if phone_numbers:
-            return True
-
-    return bool(user.telegram_channel_id)
-
-
 @router.post("/users/{user_id}/digest/generate")
 async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db)):
     """Immediate generation and sending of a digest for the user"""
@@ -344,7 +324,7 @@ async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db))
             status_code=400,
             content={"status": "error", "message": "WhatsApp не подключен"},
         )
-    if not _has_digest_delivery_channel(user, db):
+    if not has_digest_delivery_channel(user, db):
         return JSONResponse(
             status_code=400,
             content={
@@ -374,63 +354,6 @@ async def generate_immediate_digest(user_id: int, db: Session = Depends(get_db))
         )
 
 
-@router.get("/users/{user_id}/messages")
-async def get_user_messages(user_id: int, db: Session = Depends(get_db)):
-    """Get messages for a specific user"""
-    repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-
-    monitored_chats = (
-        repository_factory.get_monitored_chat_repository().get_active_chats_for_user(
-            db, user_id
-        )
-    )
-
-    if not monitored_chats:
-        return JSONResponse(
-            content={
-                "status": "success",
-                "user_id": user_id,
-                "messages": [],
-                "total": 0,
-                "monitored_chats": 0,
-            }
-        )
-
-    chat_ids = [chat.id for chat in monitored_chats]
-    messages = (
-        repository_factory.get_whatsapp_message_repository().get_messages_by_chat_ids(
-            db, chat_ids
-        )
-    )
-
-    messages_data = [
-        {
-            "id": msg.id,
-            "message_id": msg.message_id,
-            "sender": msg.sender,
-            "content": msg.content,
-            "timestamp": msg.timestamp.isoformat(),
-            "importance_score": msg.importance_score,
-            "has_media": msg.has_media,
-            "is_processed": msg.is_processed,
-            "ai_analyzed": msg.ai_analyzed,
-            "processing_attempts": msg.processing_attempts,
-            "chat_id": msg.chat_id,
-        }
-        for msg in messages
-    ]
-
-    return JSONResponse(
-        content={
-            "status": "success",
-            "user_id": user_id,
-            "messages": messages_data,
-            "total": len(messages_data),
-            "monitored_chats": len(monitored_chats),
-        }
-    )
-
-
 @router.get("/users/{user_id}/digests")
 async def get_user_digests(user_id: int, db: Session = Depends(get_db)):
     """Get digest logs for a specific user"""
@@ -446,6 +369,7 @@ async def get_user_digests(user_id: int, db: Session = Depends(get_db)):
             "digest_content": digest.digest_content,
             "message_count": digest.message_count,
             "telegram_sent": digest.telegram_sent,
+            "whatsapp_sent": digest.whatsapp_sent,
             "created_at": digest.created_at.isoformat(),
         }
         for digest in digest_logs
@@ -457,50 +381,6 @@ async def get_user_digests(user_id: int, db: Session = Depends(get_db)):
             "user_id": user_id,
             "digests": digests_data,
             "total": len(digests_data),
-        }
-    )
-
-
-@router.post("/users/{user_id}/messages/reset-processed")
-async def reset_processed_messages(user_id: int, db: Session = Depends(get_db)):
-    """Reset is_processed flag for user's messages"""
-    repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-
-    monitored_chats = (
-        repository_factory.get_monitored_chat_repository().get_active_chats_for_user(
-            db, user_id
-        )
-    )
-
-    if not monitored_chats:
-        return JSONResponse(
-            content={
-                "status": "warning",
-                "message": "No monitored chats found for user",
-                "reset_count": 0,
-            }
-        )
-
-    chat_ids = [chat.id for chat in monitored_chats]
-    messages = (
-        repository_factory.get_whatsapp_message_repository().get_messages_by_chat_ids(
-            db, chat_ids
-        )
-    )
-    processed_messages = [msg for msg in messages if msg.is_processed]
-
-    reset_count = 0
-    for msg in processed_messages:
-        msg.is_processed = False
-        reset_count += 1
-
-    db.commit()
-
-    return JSONResponse(
-        content={
-            "status": "success",
-            "message": f"Reset is_processed flag for {reset_count} messages",
-            "reset_count": reset_count,
         }
     )
 
@@ -561,11 +441,7 @@ async def get_user_cleanup_settings(user_id: int, db: Session = Depends(get_db))
                 "settings": {
                     "max_message_age_hours": user_settings.max_message_age_hours,
                     "min_importance_level": user_settings.min_importance_level,
-                    "include_media_messages": user_settings.include_media_messages,
                     "urgent_notifications": user_settings.urgent_notifications,
-                    "daily_summary": user_settings.daily_summary,
-                    "auto_add_new_chats": user_settings.auto_add_new_chats,
-                    "auto_add_group_chats_only": user_settings.auto_add_group_chats_only,
                 },
             }
         )
@@ -584,11 +460,7 @@ async def update_user_cleanup_settings(
     user_id: int,
     max_message_age_hours: int = Form(24),
     min_importance_level: int = Form(3),
-    include_media_messages: bool = Form(True),
-    urgent_notifications: bool = Form(True),
-    daily_summary: bool = Form(True),
-    auto_add_new_chats: bool = Form(False),
-    auto_add_group_chats_only: bool = Form(True),
+    urgent_notifications: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     """Update user cleanup settings"""
@@ -599,11 +471,7 @@ async def update_user_cleanup_settings(
         user_settings = get_user_settings(user_id, db)
         user_settings.max_message_age_hours = int(max_message_age_hours)
         user_settings.min_importance_level = int(min_importance_level)
-        user_settings.include_media_messages = bool(include_media_messages)
         user_settings.urgent_notifications = bool(urgent_notifications)
-        user_settings.daily_summary = bool(daily_summary)
-        user_settings.auto_add_new_chats = bool(auto_add_new_chats)
-        user_settings.auto_add_group_chats_only = bool(auto_add_group_chats_only)
         db.commit()
 
         return JSONResponse(
@@ -621,83 +489,6 @@ async def update_user_cleanup_settings(
                 "message": f"Error updating cleanup settings: {e!s}",
             },
         )
-
-
-# --- Resource savings routes ---
-
-
-@router.get("/resource-savings")
-async def get_resource_savings(
-    days_back: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
-):
-    """Get resource savings metrics from suspended users"""
-    try:
-        from app.core.resource_savings import resource_savings_service
-
-        total_savings = resource_savings_service.get_total_savings(db, days_back)
-        current_system = resource_savings_service.get_current_system_savings()
-
-        return JSONResponse(
-            {
-                "status": "success",
-                "total_savings": total_savings,
-                "current_system": current_system,
-                "period_days": days_back,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error getting resource savings: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "message": f"Failed to get resource savings: {e!s}",
-            },
-        )
-
-
-@router.get("/users/{user_id}/resource-savings")
-async def get_user_resource_savings(
-    user_id: int,
-    days_back: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
-):
-    """Get resource savings history for a specific user"""
-    try:
-        from app.core.resource_savings import resource_savings_service
-
-        user = repository_factory.get_user_repository().get_by_id_or_404(db, user_id)
-        savings_history = resource_savings_service.get_savings_by_user(
-            db, user_id, days_back
-        )
-
-        return JSONResponse(
-            {
-                "status": "success",
-                "user_id": user_id,
-                "username": user.username,
-                "savings_history": savings_history,
-                "period_days": days_back,
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting user resource savings: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "message": f"Failed to get user resource savings: {e!s}",
-            },
-        )
-
-
-@router.get("/resource-savings-page", response_class=HTMLResponse)
-async def resource_savings_page(request: Request):
-    """Resource savings metrics page"""
-    return templates.TemplateResponse(request, "resource_savings.html")
 
 
 @router.get("/system/status")

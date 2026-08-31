@@ -35,39 +35,3 @@ def test_metrics_endpoint(authenticated_client):
     assert "metrics" in data
     assert "timestamp" in data
     assert "users" in data["metrics"] or "performance" in data["metrics"]
-
-
-@pytest.mark.e2e
-def test_monitoring_dashboard(authenticated_client):
-    """GET /monitoring/dashboard returns HTML (admin-auth required)."""
-    response = authenticated_client.get("/monitoring/dashboard")
-    assert response.status_code == 200
-    assert "text/html" in response.headers.get("Content-Type", "")
-    assert "dashboard" in response.text.lower() or "monitoring" in response.text.lower()
-
-
-@pytest.mark.e2e
-def test_monitoring_alerts(authenticated_client):
-    """GET /monitoring/alerts returns JSON (admin-auth required)."""
-    response = authenticated_client.get("/monitoring/alerts")
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, dict | list)
-
-
-@pytest.mark.e2e
-def test_monitoring_traces(authenticated_client):
-    """GET /monitoring/traces returns JSON (admin-auth required)."""
-    response = authenticated_client.get("/monitoring/traces")
-    assert response.status_code == 200
-    data = response.json()
-    assert "traces" in data or "total_traces" in data
-
-
-@pytest.mark.e2e
-def test_openai_stats(authenticated_client):
-    """GET /monitoring/openai returns JSON (admin-auth required)."""
-    response = authenticated_client.get("/monitoring/openai")
-    assert response.status_code == 200
-    data = response.json()
-    assert "openai" in data or "timestamp" in data

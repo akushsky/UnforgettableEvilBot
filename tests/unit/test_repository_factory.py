@@ -2,7 +2,6 @@ from app.core.repositories import (
     digest_log_repository,
     monitored_chat_repository,
     openai_metrics_repository,
-    resource_savings_repository,
     system_log_repository,
     user_repository,
     user_settings_repository,
@@ -48,11 +47,6 @@ class TestRepositoryFactory:
         result = self.factory.get_user_settings_repository()
         assert result == user_settings_repository
 
-    def test_get_resource_savings_repository(self):
-        """Test get_resource_savings_repository returns resource savings repository"""
-        result = self.factory.get_resource_savings_repository()
-        assert result == resource_savings_repository
-
     def test_get_openai_metrics_repository(self):
         """Test get_openai_metrics_repository returns openai metrics repository"""
         result = self.factory.get_openai_metrics_repository()
@@ -71,7 +65,6 @@ class TestRepositoryFactory:
         assert self.factory.get_digest_log_repository() is not None
         assert self.factory.get_system_log_repository() is not None
         assert self.factory.get_user_settings_repository() is not None
-        assert self.factory.get_resource_savings_repository() is not None
         assert self.factory.get_openai_metrics_repository() is not None
 
     def test_factory_methods_are_static(self):

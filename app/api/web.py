@@ -5,7 +5,7 @@ Aggregates all admin sub-routers into a single module for backward compatibility
 New routes should be added to the appropriate sub-router:
   - auth_routes.py: login/logout
   - user_routes.py: user CRUD, settings, telegram integration
-  - admin_routes.py: chats, QR, digests, cleanup, resource savings
+  - admin_routes.py: chats, QR, digests, cleanup
 """
 
 from fastapi import APIRouter

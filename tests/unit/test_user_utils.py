@@ -63,11 +63,7 @@ class TestUserUtils:
             user_id=user_id,
             max_message_age_hours=24,
             min_importance_level=3,
-            include_media_messages=True,
             urgent_notifications=True,
-            daily_summary=True,
-            auto_add_new_chats=False,
-            auto_add_group_chats_only=True,
         )
 
     def test_get_user_settings_existing_settings(self):

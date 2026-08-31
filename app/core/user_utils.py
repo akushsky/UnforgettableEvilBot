@@ -27,11 +27,7 @@ def create_default_user_settings(user_id: int, db: Session) -> UserSettings:
         user_id=user_id,
         max_message_age_hours=24,  # 24 hours default
         min_importance_level=3,
-        include_media_messages=True,
         urgent_notifications=True,
-        daily_summary=True,
-        auto_add_new_chats=False,
-        auto_add_group_chats_only=True,
     )
 
     db.add(default_settings)

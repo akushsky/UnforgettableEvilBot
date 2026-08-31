@@ -263,4 +263,5 @@ class TestHealthCheck:
         assert "cache" in data["checks"]
         cache_check = data["checks"]["cache"]
         assert cache_check["redis_available"] is True
-        assert cache_check["memory_hit_ratio"] == 0.85
+        assert "memory_hit_ratio" not in cache_check
+        assert "memory_cache_size" in cache_check

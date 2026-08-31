@@ -24,7 +24,6 @@ from app.models.database import (
     DigestPreference,
     MonitoredChat,
     OpenAIMetrics,
-    ResourceSavings,
     SystemLog,
     User,
     WhatsAppMessage,
@@ -74,7 +73,6 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
         try:
             session.execute(text("SET session_replication_role = replica;"))
             session.query(OpenAIMetrics).delete()
-            session.query(ResourceSavings).delete()
             session.query(SystemLog).delete()
             session.query(DigestLog).delete()
             session.query(WhatsAppMessage).delete()
@@ -87,7 +85,6 @@ def db_session(test_session_factory) -> Generator[Session, None, None]:
             session.rollback()
             try:
                 session.query(OpenAIMetrics).delete()
-                session.query(ResourceSavings).delete()
                 session.query(SystemLog).delete()
                 session.query(DigestLog).delete()
                 session.query(WhatsAppMessage).delete()
