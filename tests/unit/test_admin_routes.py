@@ -418,11 +418,15 @@ def test_generate_digest(
     mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
 ):
     """Test POST /admin/users/{user_id}/digest/generate creates digest."""
+    from app.core.digest_delivery import DigestSendResult
+
     _wire_digest_user(mock_repo_factory, _digest_candidate())
     _wire_digest_user(mock_delivery_repo_factory, _digest_candidate())
 
     mock_scheduler = AsyncMock()
-    mock_scheduler.create_and_send_digest = AsyncMock()
+    mock_scheduler.create_and_send_digest = AsyncMock(
+        return_value=DigestSendResult.sent(telegram_sent=True)
+    )
     mock_scheduler_cls.return_value = mock_scheduler
 
     response = client.post("/admin/users/1/digest/generate")
@@ -430,6 +434,7 @@ def test_generate_digest(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
+    assert data["outcome"] == "sent"
 
 
 @patch("app.scheduler.digest_scheduler.DigestScheduler")
@@ -439,19 +444,81 @@ def test_generate_digest_allowed_for_whatsapp_only_user(
     mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
 ):
     """A WhatsApp-preference user with phones needs no Telegram channel."""
+    from app.core.digest_delivery import DigestSendResult
+
     user = _digest_candidate(preference_name="whatsapp", telegram_channel_id=None)
     phones = ["+972500000000"]
     _wire_digest_user(mock_repo_factory, user, phone_numbers=phones)
     _wire_digest_user(mock_delivery_repo_factory, user, phone_numbers=phones)
 
     mock_scheduler = AsyncMock()
-    mock_scheduler.create_and_send_digest = AsyncMock()
+    mock_scheduler.create_and_send_digest = AsyncMock(
+        return_value=DigestSendResult.sent(whatsapp_sent=True)
+    )
     mock_scheduler_cls.return_value = mock_scheduler
 
     response = client.post("/admin/users/1/digest/generate")
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+    assert response.json()["outcome"] == "sent"
+
+
+@patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.core.digest_delivery.repository_factory")
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_reports_skipped_when_nothing_to_send(
+    mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
+):
+    """No chats / no important messages must not claim the digest was sent."""
+    from app.core.digest_delivery import DigestSendResult
+
+    _wire_digest_user(mock_repo_factory, _digest_candidate())
+    _wire_digest_user(mock_delivery_repo_factory, _digest_candidate())
+
+    mock_scheduler = AsyncMock()
+    mock_scheduler.create_and_send_digest = AsyncMock(
+        return_value=DigestSendResult.skipped("No important messages to digest")
+    )
+    mock_scheduler_cls.return_value = mock_scheduler
+
+    response = client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "skipped"
+    assert data["outcome"] == "skipped"
+    assert "отправлен" not in data["message"].lower()
+    assert (
+        "important" in data["message"].lower() or "сообщен" in data["message"].lower()
+    )
+
+
+@patch("app.scheduler.digest_scheduler.DigestScheduler")
+@patch("app.core.digest_delivery.repository_factory")
+@patch("app.api.admin_routes.repository_factory")
+def test_generate_digest_reports_failed_delivery(
+    mock_repo_factory, mock_delivery_repo_factory, mock_scheduler_cls, client
+):
+    """Delivery failure must surface as error, not success."""
+    from app.core.digest_delivery import DigestSendResult
+
+    _wire_digest_user(mock_repo_factory, _digest_candidate())
+    _wire_digest_user(mock_delivery_repo_factory, _digest_candidate())
+
+    mock_scheduler = AsyncMock()
+    mock_scheduler.create_and_send_digest = AsyncMock(
+        return_value=DigestSendResult.failed("Telegram send failed")
+    )
+    mock_scheduler_cls.return_value = mock_scheduler
+
+    response = client.post("/admin/users/1/digest/generate")
+
+    assert response.status_code == 400
+    data = response.json()
+    assert data["status"] == "error"
+    assert data["outcome"] == "failed"
+    assert "Telegram" in data["message"] or "failed" in data["message"].lower()
 
 
 @patch("app.core.digest_delivery.repository_factory")

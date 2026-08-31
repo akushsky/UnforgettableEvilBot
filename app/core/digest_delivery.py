@@ -1,8 +1,46 @@
-"""Shared helpers for digest delivery channel checks."""
+"""Shared helpers for digest delivery channel checks and send outcomes."""
+
+from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.core.repository_factory import repository_factory
+
+DigestOutcome = Literal["sent", "skipped", "failed"]
+
+
+@dataclass(frozen=True)
+class DigestSendResult:
+    """Outcome of create_and_send_digest — never claim sent unless delivery succeeded."""
+
+    outcome: DigestOutcome
+    reason: str
+    telegram_sent: bool = False
+    whatsapp_sent: bool = False
+
+    @classmethod
+    def sent(
+        cls,
+        *,
+        telegram_sent: bool = False,
+        whatsapp_sent: bool = False,
+        reason: str = "",
+    ) -> "DigestSendResult":
+        return cls(
+            outcome="sent",
+            reason=reason or "Digest delivered",
+            telegram_sent=telegram_sent,
+            whatsapp_sent=whatsapp_sent,
+        )
+
+    @classmethod
+    def skipped(cls, reason: str) -> "DigestSendResult":
+        return cls(outcome="skipped", reason=reason)
+
+    @classmethod
+    def failed(cls, reason: str) -> "DigestSendResult":
+        return cls(outcome="failed", reason=reason)
 
 
 def has_digest_delivery_channel(user, db: Session) -> bool:

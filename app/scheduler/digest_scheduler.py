@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.data_cleanup import cleanup_service
+from app.core.digest_delivery import DigestSendResult
 from app.core.repository_factory import repository_factory
 from app.core.user_utils import get_user_settings
 from app.database.connection import get_db_session
@@ -237,8 +238,12 @@ class DigestScheduler:
             )
             return DEFAULT_MIN_IMPORTANCE_LEVEL
 
-    async def create_and_send_digest(self, user: User, db: Session):
-        """Create and send a digest for the user"""
+    async def create_and_send_digest(self, user: User, db: Session) -> DigestSendResult:
+        """Create and send a digest for the user.
+
+        Returns a DigestSendResult so callers never assume delivery succeeded
+        when the method returned without raising.
+        """
         try:
             logger.info(f"Creating digest for user {user.username}")
 
@@ -248,7 +253,7 @@ class DigestScheduler:
 
             if not monitored_chats:
                 logger.info(f"No monitored chats for user {user.username}")
-                return
+                return DigestSendResult.skipped("Нет отслеживаемых чатов")
 
             min_importance_level = self._get_min_importance_level(user, db)
 
@@ -280,7 +285,7 @@ class DigestScheduler:
 
             if not chat_messages:
                 logger.info(f"No important messages for user {user.username}")
-                return
+                return DigestSendResult.skipped("Нет важных сообщений для дайджеста")
 
             try:
                 digest_content = await self.openai_service.create_digest_by_chats(
@@ -294,7 +299,7 @@ class DigestScheduler:
                 await self._notify_admin_digest_failure(
                     user, e, total_important_messages
                 )
-                return
+                return DigestSendResult.failed(f"Ошибка AI при создании дайджеста: {e}")
 
             telegram_sent = False
             whatsapp_sent = False
@@ -400,28 +405,37 @@ class DigestScheduler:
                     f"Digest created and sent for user {user.username}. "
                     f"Messages: {total_important_messages}, Chats: {len(chat_messages)}"
                 )
-            else:
-                logger.error(
-                    f"Digest delivery failed for user {user.username}. "
-                    f"Telegram error: {telegram_error}, WhatsApp error: {whatsapp_error}. "
-                    f"{total_important_messages} messages preserved for the next cycle."
+                return DigestSendResult.sent(
+                    telegram_sent=telegram_sent,
+                    whatsapp_sent=whatsapp_sent,
+                    reason="Дайджест успешно создан и отправлен",
                 )
-                # The messages stay unprocessed so the next successful digest
-                # still carries them, but the failed attempt is logged anyway:
-                # should_create_digest() keys off the last digest_log row, so
-                # without it every 5-minute tick would regenerate and re-attempt
-                # delivery. With it, the retry (including the phone numbers that
-                # failed in a partial WhatsApp delivery) waits a full interval
-                # instead of spamming both the AI and the recipients.
-                repository_factory.get_digest_log_repository().create(
-                    db, digest_log_data
-                )
-                await self._notify_admin_delivery_failure(
-                    user,
-                    telegram_error,
-                    whatsapp_error,
-                    total_important_messages,
-                )
+
+            logger.error(
+                f"Digest delivery failed for user {user.username}. "
+                f"Telegram error: {telegram_error}, WhatsApp error: {whatsapp_error}. "
+                f"{total_important_messages} messages preserved for the next cycle."
+            )
+            # The messages stay unprocessed so the next successful digest
+            # still carries them, but the failed attempt is logged anyway:
+            # should_create_digest() keys off the last digest_log row, so
+            # without it every 5-minute tick would regenerate and re-attempt
+            # delivery. With it, the retry (including the phone numbers that
+            # failed in a partial WhatsApp delivery) waits a full interval
+            # instead of spamming both the AI and the recipients.
+            repository_factory.get_digest_log_repository().create(db, digest_log_data)
+            await self._notify_admin_delivery_failure(
+                user,
+                telegram_error,
+                whatsapp_error,
+                total_important_messages,
+            )
+            failure_parts = [p for p in (telegram_error, whatsapp_error) if p]
+            return DigestSendResult.failed(
+                "; ".join(failure_parts)
+                if failure_parts
+                else "Доставка дайджеста не удалась"
+            )
 
         except Exception as e:
             logger.error(f"Error creating digest for user {user.username}: {e}")
