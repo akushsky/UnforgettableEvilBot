@@ -99,7 +99,9 @@ def test_generate_digest_no_messages(
     response = authenticated_client.post(f"/admin/users/{user.id}/digest/generate")
     assert response.status_code == 200
     data = response.json()
-    assert data.get("status") == "success"
+    assert data.get("status") == "skipped"
+    assert data.get("outcome") == "skipped"
+    assert "отправлен" not in data.get("message", "").lower()
 
 
 @pytest.mark.e2e
