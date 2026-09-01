@@ -252,6 +252,35 @@ class TestOpenAIClient:
             assert "User prompt" in messages[0]["content"]
 
     @pytest.mark.asyncio
+    async def test_make_request_reasoning_model_applies_min_completion_tokens(self):
+        """Short max_tokens must still get a completion floor for gpt-5-mini."""
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "4"
+        mock_response.usage.prompt_tokens = 5
+        mock_response.usage.completion_tokens = 1
+        mock_response.usage.total_tokens = 6
+
+        self.client.client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch("app.openai_service.client.openai_monitor"):
+            await self.client.make_request(
+                "Rate 1-5", model="gpt-5-mini", max_tokens=16
+            )
+
+            call_kwargs = self.client.client.chat.completions.create.call_args.kwargs
+            assert "max_completion_tokens" in call_kwargs
+            assert call_kwargs["max_completion_tokens"] == max(
+                16 * OpenAIClient.REASONING_TOKEN_MULTIPLIER,
+                OpenAIClient.REASONING_MIN_COMPLETION_TOKENS,
+            )
+            assert call_kwargs["max_completion_tokens"] == 512
+            assert "max_tokens" not in call_kwargs
+            assert "temperature" not in call_kwargs
+
+    @pytest.mark.asyncio
     async def test_validate_input_whitespace_only(self):
         """Test input validation with whitespace-only string"""
         result = await self.client.validate_input("   \n\t  ")
