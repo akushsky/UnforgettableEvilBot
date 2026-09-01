@@ -15,6 +15,7 @@ class OpenAIClient(BaseService):
 
     REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "gpt-5-mini", "gpt-5"}
     REASONING_TOKEN_MULTIPLIER = 8
+    REASONING_MIN_COMPLETION_TOKENS = 512
 
     def __init__(self):
         """Init  ."""
@@ -56,9 +57,12 @@ class OpenAIClient(BaseService):
             if model in self.REASONING_MODELS:
                 # Reasoning models spend most of max_completion_tokens on
                 # internal chain-of-thought, so we need a larger budget
-                # to ensure visible output is produced.
-                kwargs["max_completion_tokens"] = (
-                    max_tokens * self.REASONING_TOKEN_MULTIPLIER
+                # to ensure visible output is produced. Short callers
+                # (e.g. importance scoring with max_tokens=16) still need
+                # a floor or the model returns empty content.
+                kwargs["max_completion_tokens"] = max(
+                    max_tokens * self.REASONING_TOKEN_MULTIPLIER,
+                    self.REASONING_MIN_COMPLETION_TOKENS,
                 )
             else:
                 kwargs["max_tokens"] = max_tokens

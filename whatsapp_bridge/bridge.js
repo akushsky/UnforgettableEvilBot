@@ -416,15 +416,27 @@ class BaileysWhatsAppBridge {
   }
 
   /**
-   * True only when Baileys creds show a completed phone pairing (registered + me).
-   * An empty or half-written session folder from a QR attempt must not count.
+   * True when Baileys creds show a completed device pairing (QR or phone code).
+   *
+   * Baileys only sets `creds.registered = true` in the link-code (phone) flow.
+   * QR pairing via configureSuccessfulPairing writes `account` + `me` and leaves
+   * `registered` false forever — so requiring `registered` alone skips every
+   * QR-linked session on restore/reconnect.
+   *
+   * Half-written QR attempt folders have neither `account` nor a usable `me.id`,
+   * so they still do not count (no pairing-socket spam on boot).
    */
   async hasRegisteredSession(userId) {
     try {
       const credsPath = path.join(this.sessionFolderFor(userId), 'creds.json');
       const raw = await fs.readFile(credsPath, 'utf8');
       const creds = JSON.parse(raw);
-      return !!(creds && creds.registered && creds.me);
+      return !!(
+        creds
+        && creds.me
+        && creds.me.id
+        && (creds.registered === true || creds.account)
+      );
     } catch (e) {
       if (e && (e.code === 'ENOENT' || e instanceof SyntaxError)) return false;
       console.error(`hasRegisteredSession(${userId}) unexpected error:`, e?.message || e);

@@ -405,6 +405,23 @@ class TestBridgeSourceInvariants:
             not in source
         )
 
+    def test_has_registered_session_accepts_qr_account_creds(self):
+        """QR pairing never sets creds.registered; account + me.id must count.
+
+        Requiring only `creds.registered` skips every QR-linked session on
+        restore (prod outage after PR #6). Phone-code flow still sets
+        registered=true; half-written QR folders lack account and me.id.
+        """
+        source = self.source()
+        start = source.index("async hasRegisteredSession(userId)")
+        end = source.index("reconnectDelayMs(userId)", start)
+        body = source[start:end]
+
+        assert "creds.registered === true || creds.account" in body
+        assert "creds.me.id" in body
+        # Must not require registered alone (the PR #6 regression).
+        assert "return !!(creds && creds.registered && creds.me);" not in body
+
     def test_chats_route_uses_registered_session_not_folder(self):
         """/chats must not auto-init from half-written QR folders."""
         source = self.source()
